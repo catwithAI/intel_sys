@@ -9,12 +9,21 @@
 {% if end_date %}- **结束时间**: {{ end_date }}{% endif %}
 {% if market_slug %}- **市场链接**: https://polymarket.com/event/{{ event_slug }}{% endif %}
 
+## 可交易选项及当前价格
+{% for item in outcomes_with_prices %}
+- **{{ item.outcome }}**: ${{ "%.4f" | format(item.price) }}（即 {{ "%.1f" | format(item.price * 100) }}¢）
+{% endfor %}
+
 ## 检测到的信号
 {% for signal in signals %}
 - **{{ signal.type }}**: {{ signal.description }}（评分: {{ signal.score }}）
 {% endfor %}
 
 ## 综合异动分数: {{ anomaly_score }}
+{% if breaking_score %}
+## Breaking 评分: {{ breaking_score }}
+（该评分反映 Tier 1 广域扫描的信号强度，评分越高表示多个维度同时出现异动）
+{% endif %}
 
 ## 任务
 分析该交易异动，直接返回一个 JSON 对象（不要用 markdown 代码块包裹）：
@@ -29,6 +38,8 @@
     "action_items": ["建议操作1", "建议操作2"],
     "trading_suggestion": {
         "direction": "buy_yes|buy_no|hold|avoid",
+        "outcome": "具体买入的选项名称，如 Yes 或 No",
+        "price": 0.00,
         "reasoning": "购买建议的理由，需考虑当前价格、信号强度和风险"
     },
     "geopolitical_impact": "分析该事件在地缘政治、货币政策、战争冲突、国家走向方面的潜在影响。如果该市场与地缘政治无关，说明其所属领域的影响即可"
@@ -40,6 +51,10 @@
 - 仅在多个信号同时出现且时机可疑（公开新闻之前）时才标记为 "insider_trading"
 - 需考虑市场背景：政治事件、计划中的公告等
 - question_zh: 准确翻译市场问题，保留专有名词
-- trading_suggestion: direction 必须是 buy_yes/buy_no/hold/avoid 之一，reasoning 需结合价格和异动信号给出理由
+- trading_suggestion:
+  - direction 必须是 buy_yes/buy_no/hold/avoid 之一
+  - 当 direction 为 buy_yes 或 buy_no 时，必须填写 outcome（具体选项名称，从上方"可交易选项"中选择）和 price（该选项当前价格，从上方价格中取值）
+  - 当 direction 为 hold 或 avoid 时，outcome 和 price 可留空
+  - reasoning 需结合具体选项价格和异动信号给出理由，例如"以 $0.32 买入 Yes，若事件发生可获得 3.1x 回报"
 - geopolitical_impact: 重点分析对全球格局、区域稳定、经济走势的影响
 - summary、analysis、action_items、trading_suggestion.reasoning、geopolitical_impact 必须使用中文

@@ -59,6 +59,92 @@ class PolymarketSource(BaseSource):
         )
         return events
 
+    async def fetch_wide(self) -> list[Event]:
+        """Tier 1: Fetch all markets from Gamma API with zero CLOB calls.
+
+        Returns Event objects containing Gamma-provided fields for lightweight
+        screening (volume, price changes, spread, etc.).
+        """
+        await self._refresh_markets()
+
+        events: list[Event] = []
+        for market in self._active_markets:
+            condition_id = market.get("conditionId", market.get("id", ""))
+            question = market.get("question", "")
+            volume_data = self._extract_volume(market)
+
+            # Parse outcome prices from Gamma
+            outcome_prices = market.get("outcomePrices", [])
+            best_bid = float(market.get("bestBid", 0) or 0)
+            best_ask = float(market.get("bestAsk", 0) or 0)
+            spread = best_ask - best_bid if best_ask > 0 and best_bid > 0 else 0.0
+
+            events.append(Event(
+                source=SourceType.POLYMARKET,
+                source_id=condition_id,
+                data={
+                    "question": question,
+                    "condition_id": condition_id,
+                    "volume_24h": volume_data.get("volume_24h", 0),
+                    "volume_total": volume_data.get("volume_total", 0),
+                    "volume_1wk": float(market.get("volume1wk", 0) or 0),
+                    "one_day_price_change": float(market.get("oneDayPriceChange", 0) or 0),
+                    "one_hour_price_change": float(market.get("oneHourPriceChange", 0) or 0),
+                    "outcome_prices": outcome_prices,
+                    "best_bid": best_bid,
+                    "best_ask": best_ask,
+                    "spread": spread,
+                    "liquidity": float(market.get("liquidity", 0) or 0),
+                    "last_trade_price": float(market.get("lastTradePrice", 0) or 0),
+                    "clob_token_ids": market.get("clobTokenIds", []),
+                    "market_slug": market.get("slug", ""),
+                    "event_slug": market.get("_event_slug", ""),
+                    "end_date": market.get("endDate", ""),
+                    "outcomes": market.get("outcomes", []),
+                },
+                metadata={
+                    "market_id": market.get("id", ""),
+                    "category": market.get("category", ""),
+                },
+            ))
+
+        logger.info(
+            "Polymarket wide scan: %d markets from Gamma (zero CLOB calls)",
+            len(events),
+        )
+        return events
+
+    async def fetch_selected(self, markets: list[dict]) -> list[Event]:
+        """Tier 2: Fetch CLOB orderbook + midpoint only for pre-selected markets.
+
+        Args:
+            markets: List of market dicts (must contain clobTokenIds, conditionId, etc.)
+        """
+        tasks: list[asyncio.Task] = []
+        for market in markets:
+            tokens = market.get("clobTokenIds")
+            if not tokens:
+                continue
+            for token_id in (tokens if isinstance(tokens, list) else [tokens]):
+                tasks.append(
+                    asyncio.create_task(self._fetch_token_data(market, token_id))
+                )
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        events: list[Event] = []
+        for r in results:
+            if isinstance(r, Exception):
+                logger.warning("Token fetch failed: %s", r)
+            elif r is not None:
+                events.append(r)
+
+        logger.info(
+            "Polymarket selected fetch: %d events from %d markets (%d CLOB calls)",
+            len(events), len(markets), len(tasks),
+        )
+        return events
+
     async def _fetch_token_data(self, market: dict, token_id: str) -> Event | None:
         """Fetch orderbook + midpoint for a single token concurrently."""
         try:
@@ -100,7 +186,7 @@ class PolymarketSource(BaseSource):
         try:
             resp = await self._http.get(
                 f"{GAMMA_API}/events",
-                params={"active": "true", "closed": "false", "limit": 100},
+                params={"active": "true", "closed": "false", "limit": settings.pm_gamma_limit},
             )
             resp.raise_for_status()
             data = resp.json()
