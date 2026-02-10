@@ -11,6 +11,8 @@ from pydantic import BaseModel, Field
 class SourceType(str, Enum):
     POLYMARKET = "polymarket"
     GITHUB = "github"
+    HACKERNEWS = "hackernews"
+    TWITTER = "twitter"
 
 
 class Severity(str, Enum):
@@ -50,6 +52,7 @@ class Alert(BaseModel):
     title: str = ""
     event: Event
     enrichment: AIEnrichment = Field(default_factory=AIEnrichment)
+    corroboration: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 

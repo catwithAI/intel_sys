@@ -111,7 +111,7 @@
               </div>
               <a x-show="getSourceUrl(selectedAlert)" :href="getSourceUrl(selectedAlert)" target="_blank"
                  class="shrink-0 ml-4 px-3 py-1.5 text-sm rounded-md bg-gray-800 text-gray-300 hover:text-white hover:bg-gray-700 transition inline-flex items-center gap-1.5">
-                <span x-text="selectedAlert.source === 'github' ? '在 GitHub 查看' : '在 Polymarket 查看'"></span>
+                <span x-text="selectedAlert.source === 'github' ? '在 GitHub 查看' : selectedAlert.source === 'hackernews' ? '在 HN 查看' : '在 Polymarket 查看'"></span>
                 <span>&nearr;</span>
               </a>
             </div>
@@ -136,6 +136,55 @@
                   <div class="h-full bg-indigo-500 rounded-full" :style="'width:' + ((selectedAlert.enrichment.confidence || 0) * 100) + '%'"></div>
                 </div>
                 <span class="text-sm text-gray-300" x-text="((selectedAlert.enrichment.confidence || 0) * 100).toFixed(0) + '%'"></span>
+              </div>
+            </div>
+
+            <!-- 佐证信息 -->
+            <div x-show="selectedAlert.corroboration?.has_evidence" class="mb-6">
+              <h3 class="text-sm font-medium text-gray-400 mb-2">Social Media 佐证</h3>
+              <div class="bg-gray-950 rounded-lg p-4 space-y-3">
+                <p x-show="selectedAlert.corroboration?.summary"
+                   class="text-sm text-gray-300" x-text="selectedAlert.corroboration.summary"></p>
+
+                <!-- HN Stories -->
+                <div x-show="selectedAlert.corroboration?.hn_stories?.length > 0">
+                  <span class="text-xs font-medium text-orange-400">Hacker News</span>
+                  <ul class="mt-1 space-y-1">
+                    <template x-for="story in (selectedAlert.corroboration?.hn_stories || []).slice(0, 5)" :key="story.objectID">
+                      <li class="text-sm text-gray-300 flex items-center gap-2">
+                        <span class="text-orange-400">&#8226;</span>
+                        <a :href="story.hn_url" target="_blank" class="text-indigo-400 hover:text-indigo-300 hover:underline truncate"
+                           x-text="story.title"></a>
+                        <span class="shrink-0 text-xs text-gray-500" x-text="story.points + '↑ ' + story.num_comments + '💬'"></span>
+                      </li>
+                    </template>
+                  </ul>
+                </div>
+
+                <!-- Tweets -->
+                <div x-show="selectedAlert.corroboration?.tweets?.length > 0">
+                  <span class="text-xs font-medium text-blue-400">Twitter</span>
+                  <ul class="mt-1 space-y-1">
+                    <template x-for="tweet in (selectedAlert.corroboration?.tweets || []).slice(0, 5)" :key="tweet.url">
+                      <li class="text-sm text-gray-300 flex items-start gap-2">
+                        <span class="text-blue-400 mt-0.5">&#8226;</span>
+                        <div class="min-w-0">
+                          <a :href="tweet.url" target="_blank" class="text-indigo-400 hover:text-indigo-300 hover:underline"
+                             x-text="'@' + tweet.author"></a>
+                          <span class="text-gray-400 ml-1" x-text="tweet.text?.substring(0, 100) + '...'"></span>
+                          <span class="text-xs text-gray-500 ml-1" x-text="tweet.likes + '❤'"></span>
+                        </div>
+                      </li>
+                    </template>
+                  </ul>
+                </div>
+
+                <!-- Confidence boost -->
+                <div x-show="selectedAlert.corroboration?.confidence_boost" class="text-sm">
+                  <span class="text-gray-400">置信度调整:</span>
+                  <span :class="selectedAlert.corroboration?.confidence_boost > 0 ? 'text-green-400' : 'text-red-400'"
+                        x-text="(selectedAlert.corroboration?.confidence_boost > 0 ? '+' : '') + (selectedAlert.corroboration?.confidence_boost || 0).toFixed(2)"></span>
+                </div>
               </div>
             </div>
 
@@ -206,6 +255,21 @@
                         <span x-show="getPolymarketCause(alert)"
                               class="text-xs bg-orange-500/10 text-orange-400 px-2 py-0.5 rounded"
                               x-text="getPolymarketCause(alert)"></span>
+                      </div>
+                    </template>
+                    <template x-if="alert.source === 'hackernews'">
+                      <div class="flex flex-wrap gap-2">
+                        <span x-show="alert.event?.data?.points"
+                              class="text-xs bg-orange-500/10 text-orange-400 px-2 py-0.5 rounded">
+                          <span x-text="alert.event.data.points"></span> points
+                        </span>
+                        <span x-show="alert.event?.data?.num_comments"
+                              class="text-xs bg-cyan-500/10 text-cyan-400 px-2 py-0.5 rounded">
+                          <span x-text="alert.event.data.num_comments"></span> 评论
+                        </span>
+                        <span x-show="getHnCategory(alert)"
+                              class="text-xs bg-purple-500/10 text-purple-400 px-2 py-0.5 rounded"
+                              x-text="getHnCategory(alert)"></span>
                       </div>
                     </template>
                   </div>
@@ -329,7 +393,7 @@
 <script>
 function dashboard() {
   return {
-    sources: ['polymarket', 'github'],
+    sources: ['polymarket', 'github', 'hackernews'],
     currentTab: 'polymarket',
     currentView: 'alerts',
     systemStatus: {},
@@ -492,7 +556,7 @@ function dashboard() {
     // --- 显示辅助 ---
 
     sourceLabel(source) {
-      const map = { polymarket: '预测市场', github: 'GitHub 热门' };
+      const map = { polymarket: '预测市场', github: 'GitHub 热门', hackernews: 'Hacker News' };
       return map[source] || source;
     },
 
@@ -568,12 +632,26 @@ function dashboard() {
         const slug = alert.event.data.event_slug || alert.event.data.market_slug;
         return slug ? `https://polymarket.com/event/${slug}` : '';
       }
+      if (alert.source === 'hackernews') {
+        return alert.event.data.hn_url || '';
+      }
       return '';
     },
 
     getPolymarketCause(alert) {
       const parsed = this.parseEnrichmentAnalysis(alert);
       return parsed?.likely_cause || '';
+    },
+
+    getHnCategory(alert) {
+      const parsed = this.parseEnrichmentAnalysis(alert);
+      if (!parsed?.category) return '';
+      const map = {
+        ai: 'AI', infrastructure: '基础设施', security: '安全',
+        programming: '编程', startup: '创业', open_source: '开源',
+        industry_news: '行业资讯', science: '科学', other: '其他',
+      };
+      return map[parsed.category] || parsed.category;
     },
 
     renderAnalysis(alert) {
@@ -642,6 +720,37 @@ function dashboard() {
       if (parsed.severity) {
         html += `<div class="mb-3"><span class="text-xs font-medium text-gray-400">AI 严重程度</span>`;
         html += `<span class="ml-2 text-xs px-2 py-0.5 rounded ${this.severityBadge(parsed.severity)}">${this.escapeHtml(parsed.severity)}</span></div>`;
+      }
+
+      // HN-specific fields
+      if (parsed.topics) {
+        const topics = Array.isArray(parsed.topics) ? parsed.topics : [parsed.topics];
+        html += '<div class="mb-3"><span class="text-xs font-medium text-gray-400">标签</span>';
+        html += '<div class="flex flex-wrap gap-1.5 mt-1">';
+        for (const t of topics) {
+          html += `<span class="text-xs bg-orange-500/10 text-orange-400 px-2 py-0.5 rounded">${this.escapeHtml(t)}</span>`;
+        }
+        html += '</div></div>';
+      }
+
+      if (parsed.key_insights) {
+        const insights = Array.isArray(parsed.key_insights) ? parsed.key_insights : [parsed.key_insights];
+        html += '<div class="mb-3"><span class="text-xs font-medium text-gray-400">社区洞察</span>';
+        html += '<ul class="mt-1 space-y-1">';
+        for (const ins of insights) {
+          html += `<li class="text-sm text-gray-300 flex items-start gap-2"><span class="text-orange-400 mt-0.5">&#8226;</span>${this.escapeHtml(ins)}</li>`;
+        }
+        html += '</ul></div>';
+      }
+
+      if (parsed.impact_assessment) {
+        html += `<div class="mb-3"><span class="text-xs font-medium text-gray-400">影响评估</span>`;
+        html += `<p class="mt-1 text-sm text-gray-300">${this.escapeHtml(parsed.impact_assessment)}</p></div>`;
+      }
+
+      if (parsed.relevance_score != null) {
+        html += `<div class="mb-3"><span class="text-xs font-medium text-gray-400">相关度评分</span>`;
+        html += `<span class="ml-2 text-sm font-semibold text-orange-300">${parsed.relevance_score}</span></div>`;
       }
 
       if (!html) {

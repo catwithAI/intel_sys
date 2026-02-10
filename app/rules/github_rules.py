@@ -5,6 +5,7 @@ import logging
 import time
 
 from app.config import settings
+from app.corroboration.service import CorroborationService
 from app.engine.context import RuleContext
 from app.engine.registry import rule_registry
 from app.models import AIEnrichment, Alert, Event, Severity, SourceType
@@ -231,6 +232,19 @@ async def discover_trending_repos(ctx: RuleContext) -> bool:
                 enrichment=enrichment,
             )
 
+            # Corroboration: search HN/Twitter for supporting evidence
+            corroboration_svc = CorroborationService()
+            try:
+                corr = await corroboration_svc.search(alert)
+                if corr:
+                    alert.corroboration = corr.to_dict()
+                    new_conf = min(max(alert.enrichment.confidence + corr.confidence_boost, 0.0), 1.0)
+                    alert.enrichment.confidence = new_conf
+                    if corr.confidence_boost >= 0.15 and alert.severity == Severity.MEDIUM:
+                        alert.severity = Severity.HIGH
+            finally:
+                await corroboration_svc.close()
+
             await ctx.db.lpush("alerts:github", alert.model_dump_json())
             await ctx.db.ltrim("alerts:github", 0, settings.alert_max_per_source - 1)
             await ctx.db.set(
@@ -316,6 +330,19 @@ async def discover_trending_repos(ctx: RuleContext) -> bool:
                 event=event,
                 enrichment=enrichment,
             )
+
+            # Corroboration: search HN/Twitter for supporting evidence
+            corroboration_svc = CorroborationService()
+            try:
+                corr = await corroboration_svc.search(alert)
+                if corr:
+                    alert.corroboration = corr.to_dict()
+                    new_conf = min(max(alert.enrichment.confidence + corr.confidence_boost, 0.0), 1.0)
+                    alert.enrichment.confidence = new_conf
+                    if corr.confidence_boost >= 0.15 and alert.severity == Severity.MEDIUM:
+                        alert.severity = Severity.HIGH
+            finally:
+                await corroboration_svc.close()
 
             await ctx.db.lpush("alerts:github", alert.model_dump_json())
             await ctx.db.ltrim("alerts:github", 0, settings.alert_max_per_source - 1)

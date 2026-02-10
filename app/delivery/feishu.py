@@ -73,8 +73,15 @@ class FeishuWebhookDelivery(BaseDelivery):
             elements = self._format_github_card(alert)
         elif alert.source == SourceType.POLYMARKET:
             elements = self._format_polymarket_card(alert)
+        elif alert.source == SourceType.HACKERNEWS:
+            elements = self._format_hackernews_card(alert)
         else:
             elements = self._format_generic_card(alert)
+
+        # Append corroboration panel if available
+        corr_panel = self._format_corroboration_panel(alert.corroboration)
+        if corr_panel:
+            elements.append(corr_panel)
 
         return {
             "msg_type": "interactive",
@@ -230,6 +237,8 @@ class FeishuWebhookDelivery(BaseDelivery):
         trading = ai_data.get("trading_suggestion", {})
         direction = trading.get("direction", "")
         reasoning = trading.get("reasoning", "")
+        trade_outcome = trading.get("outcome", "")
+        trade_price = trading.get("price", 0)
 
         direction_map = {
             "buy_yes": "建议买入 Yes",
@@ -239,8 +248,12 @@ class FeishuWebhookDelivery(BaseDelivery):
         }
         direction_zh = direction_map.get(direction, direction)
 
+        breaking_score = event.data.get("breaking_score", 0)
+
         # -- Summary section (always visible) --
         summary_lines = []
+        if breaking_score >= 2.0:
+            summary_lines.append("🔴 **BREAKING**")
         if question_zh:
             summary_lines.append(f"**{question_zh}**")
         if question:
@@ -254,30 +267,183 @@ class FeishuWebhookDelivery(BaseDelivery):
 
         # -- Signals section (collapsed) --
         if signals:
+            # Separate wide (Tier 1) and deep (Tier 2) signals
+            wide_sigs = [s for s in signals if s["type"].startswith("Wide:")]
+            deep_sigs = [s for s in signals if s["type"].startswith("Deep:")]
+            other_sigs = [s for s in signals if not s["type"].startswith(("Wide:", "Deep:"))]
+
             sig_lines = []
-            for s in signals:
-                sig_lines.append(f"- **{s['type']}**: {s.get('description', '')}")
+            if wide_sigs:
+                sig_lines.append("**广域扫描信号**")
+                for s in wide_sigs:
+                    sig_lines.append(f"- **{s['type']}**: {s.get('description', '')}")
+            if deep_sigs:
+                sig_lines.append("**深度分析信号**")
+                for s in deep_sigs:
+                    sig_lines.append(f"- **{s['type']}**: {s.get('description', '')}")
+            if other_sigs:
+                for s in other_sigs:
+                    sig_lines.append(f"- **{s['type']}**: {s.get('description', '')}")
+
             footer_parts = []
             if end_date:
                 footer_parts.append(f"结束时间: {end_date[:10]}")
             footer_parts.append(f"置信度: {confidence:.2f}")
             if anomaly_score:
                 footer_parts.append(f"异动评分: {anomaly_score}")
+            if breaking_score:
+                footer_parts.append(f"Breaking: {breaking_score:.2f}")
             sig_lines.append(f"\n{' | '.join(footer_parts)}")
             elements.append(_collapsible("异动信号", [_md("\n".join(sig_lines))]))
 
-        # -- Trading suggestion (collapsed) --
+        # -- Trading suggestion (always visible) --
         if direction_zh:
             trading_lines = [f"**{direction_zh}**"]
+            # Show specific outcome and price for buy directions
+            if direction in ("buy_yes", "buy_no") and trade_outcome:
+                price_display = f"${trade_price:.4f}" if trade_price else ""
+                if price_display:
+                    payout = 1.0 / trade_price if trade_price > 0 else 0
+                    trading_lines.append(
+                        f"买入 **{trade_outcome}** @ {price_display}"
+                        f"（若胜出回报 {payout:.1f}x）"
+                    )
+                else:
+                    trading_lines.append(f"买入 **{trade_outcome}**")
             if reasoning:
                 trading_lines.append(reasoning)
-            elements.append(_collapsible("交易建议", [_md("\n".join(trading_lines))]))
+            elements.append(_md("\n".join(trading_lines)))
 
         # -- Geopolitical impact (collapsed) --
         if geopolitical_impact:
             elements.append(_collapsible("地缘影响", [_md(geopolitical_impact)]))
 
         return elements
+
+    # ------------------------------------------------------------------
+    # Hacker News cards
+    # ------------------------------------------------------------------
+    def _format_hackernews_card(self, alert: Alert) -> list[dict]:
+        event = alert.event
+        data = event.data
+        points = data.get("points", 0)
+        num_comments = data.get("num_comments", 0)
+        author = data.get("author", "")
+        url = data.get("url", "")
+        hn_url = data.get("hn_url", "")
+        strategy = data.get("discovery_strategy", event.metadata.get("strategy", ""))
+
+        # Parse AI analysis JSON
+        ai_data: dict = {}
+        if alert.enrichment.analysis:
+            try:
+                ai_data = json.loads(alert.enrichment.analysis)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        summary = ai_data.get("summary", alert.enrichment.summary or "")
+        category = ai_data.get("category", "")
+        topics = ai_data.get("topics", [])
+        key_insights = ai_data.get("key_insights", [])
+        impact_assessment = ai_data.get("impact_assessment", "")
+
+        # -- Summary section (always visible) --
+        summary_lines = []
+        if summary:
+            summary_lines.append(summary)
+        links = []
+        if url:
+            links.append(f"[原文链接]({url})")
+        if hn_url:
+            links.append(f"[HN 讨论]({hn_url})")
+        if links:
+            summary_lines.append("\n" + " | ".join(links))
+
+        elements: list[dict] = [_md("\n".join(summary_lines))]
+
+        # -- Details section (collapsed) --
+        detail_lines = [
+            f"得分: {points} | 评论: {num_comments} | 作者: {author}",
+        ]
+        if category:
+            category_map = {
+                "ai": "AI", "infrastructure": "基础设施", "security": "安全",
+                "programming": "编程", "startup": "创业", "open_source": "开源",
+                "industry_news": "行业资讯", "science": "科学", "other": "其他",
+            }
+            detail_lines.append(f"分类: {category_map.get(category, category)}")
+        if topics:
+            detail_lines.append(f"标签: {', '.join(topics)}")
+        if strategy:
+            detail_lines.append(f"发现策略: {strategy}")
+        elements.append(_collapsible("详细信息", [_md("\n".join(detail_lines))]))
+
+        # -- Key insights (collapsed) --
+        if key_insights:
+            insight_lines = []
+            for ins in key_insights:
+                insight_lines.append(f"- {ins}")
+            elements.append(_collapsible("社区洞察", [_md("\n".join(insight_lines))]))
+
+        # -- Impact assessment (collapsed) --
+        if impact_assessment:
+            elements.append(_collapsible("影响评估", [_md(impact_assessment)]))
+
+        return elements
+
+    # ------------------------------------------------------------------
+    # Corroboration panel
+    # ------------------------------------------------------------------
+    def _format_corroboration_panel(self, corr: dict) -> dict | None:
+        """Build a collapsible panel for SM corroboration evidence."""
+        if not corr or not corr.get("has_evidence"):
+            return None
+
+        lines: list[str] = []
+
+        # Summary
+        summary = corr.get("summary", "")
+        if summary:
+            lines.append(summary)
+
+        # HN stories (top 3)
+        hn_stories = corr.get("hn_stories", [])[:3]
+        if hn_stories:
+            lines.append("\n**Hacker News**")
+            for s in hn_stories:
+                title = s.get("title", "")
+                hn_url = s.get("hn_url", "")
+                points = s.get("points", 0)
+                comments = s.get("num_comments", 0)
+                if hn_url:
+                    lines.append(f"- [{title}]({hn_url}) ({points}↑ {comments}💬)")
+                else:
+                    lines.append(f"- {title} ({points}↑ {comments}💬)")
+
+        # Tweets (top 3)
+        tweets = corr.get("tweets", [])[:3]
+        if tweets:
+            lines.append("\n**Twitter**")
+            for t in tweets:
+                author = t.get("author", "")
+                text = t.get("text", "")[:100]
+                likes = t.get("likes", 0)
+                url = t.get("url", "")
+                if url:
+                    lines.append(f"- [@{author}]({url}): {text}… ({likes}❤)")
+                else:
+                    lines.append(f"- @{author}: {text}… ({likes}❤)")
+
+        # Confidence boost
+        boost = corr.get("confidence_boost", 0)
+        if boost != 0:
+            sign = "+" if boost > 0 else ""
+            lines.append(f"\n置信度调整: {sign}{boost:.2f}")
+
+        if not lines:
+            return None
+
+        return _collapsible("Social Media 佐证", [_md("\n".join(lines))])
 
     # ------------------------------------------------------------------
     # Generic fallback
