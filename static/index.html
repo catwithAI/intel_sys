@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>情报系统 - 控制台</title>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            dark: { 800: '#1e1e2e', 700: '#2a2a3e', 600: '#363650', 500: '#44446a' },
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    [x-cloak] { display: none !important; }
+    .fade-in { animation: fadeIn 0.2s ease-in; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-200 min-h-screen">
+
+<div x-data="dashboard()" x-init="init()" x-cloak>
+
+  <!-- 顶部导航 -->
+  <header class="bg-gray-900 border-b border-gray-800 px-6 py-4">
+    <div class="max-w-6xl mx-auto flex items-center justify-between">
+      <div class="flex items-center gap-4">
+        <h1 class="text-xl font-bold text-white tracking-tight">情报系统</h1>
+        <span class="flex items-center gap-1.5 text-sm">
+          <span class="w-2 h-2 rounded-full" :class="systemStatus.status === 'running' ? 'bg-green-400' : 'bg-red-400'"></span>
+          <span class="text-gray-400" x-text="systemStatus.status === 'running' ? '运行中' : '已停止'"></span>
+        </span>
+        <span class="text-xs text-gray-500" x-text="'v' + (systemStatus.version || '...')"></span>
+      </div>
+      <div class="flex items-center gap-3">
+        <button @click="refresh()" class="px-3 py-1.5 text-sm bg-gray-800 hover:bg-gray-700 rounded-md transition"
+                :class="loading && 'opacity-50 pointer-events-none'">
+          <span x-show="!loading">刷新</span>
+          <span x-show="loading">加载中...</span>
+        </button>
+        <button @click="reloadRules()" class="px-3 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 rounded-md transition">
+          重载规则
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 信源标签页 -->
+  <nav class="bg-gray-900 border-b border-gray-800 px-6">
+    <div class="max-w-6xl mx-auto flex gap-1">
+      <template x-for="tab in sources" :key="tab">
+        <button @click="switchSource(tab)"
+                class="px-4 py-2.5 text-sm font-medium transition border-b-2 -mb-px"
+                :class="currentTab === tab
+                  ? 'text-white border-indigo-500'
+                  : 'text-gray-400 border-transparent hover:text-gray-200 hover:border-gray-600'">
+          <span x-text="sourceLabel(tab)"></span>
+          <span x-show="currentTab === tab && alertsTotal > 0"
+                class="ml-1.5 text-xs bg-indigo-500/20 text-indigo-300 px-1.5 py-0.5 rounded-full"
+                x-text="alertsTotal"></span>
+        </button>
+      </template>
+    </div>
+  </nav>
+
+  <!-- 子导航 -->
+  <div class="bg-gray-900/50 border-b border-gray-800 px-6">
+    <div class="max-w-6xl mx-auto flex gap-4 py-2">
+      <button @click="currentView = 'alerts'; if (!alerts.length) fetchAlerts()"
+              class="text-sm px-3 py-1 rounded-md transition"
+              :class="currentView === 'alerts' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-gray-200'">
+        告警
+        <span x-show="alertsTotal > 0" class="text-xs text-gray-500" x-text="'(' + alertsTotal + ')'"></span>
+      </button>
+      <button @click="currentView = 'rules'; fetchRules()"
+              class="text-sm px-3 py-1 rounded-md transition"
+              :class="currentView === 'rules' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-gray-200'">
+        规则 &amp; 调度
+      </button>
+    </div>
+  </div>
+
+  <!-- 内容区 -->
+  <main class="max-w-6xl mx-auto px-6 py-6">
+
+    <!-- 告警详情视图 -->
+    <div x-show="currentView === 'detail' && selectedAlert" x-transition class="fade-in">
+      <button @click="currentView = 'alerts'; selectedAlert = null"
+              class="text-sm text-indigo-400 hover:text-indigo-300 mb-4 inline-flex items-center gap-1">
+        &larr; 返回告警列表
+      </button>
+      <template x-if="selectedAlert">
+        <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+          <div class="p-6 border-l-4" :class="severityBorderColor(selectedAlert.severity)">
+            <div class="flex items-start justify-between mb-4">
+              <div>
+                <h2 class="text-lg font-semibold text-white" x-text="selectedAlert.title"></h2>
+                <div class="flex items-center gap-3 mt-1 text-sm text-gray-400">
+                  <span x-text="timeAgo(selectedAlert.created_at)"></span>
+                  <span class="px-2 py-0.5 rounded text-xs font-medium"
+                        :class="severityBadge(selectedAlert.severity)"
+                        x-text="severityLabel(selectedAlert.severity)"></span>
+                  <span class="text-gray-500" x-text="'规则: ' + selectedAlert.rule_name"></span>
+                </div>
+              </div>
+              <a x-show="getSourceUrl(selectedAlert)" :href="getSourceUrl(selectedAlert)" target="_blank"
+                 class="shrink-0 ml-4 px-3 py-1.5 text-sm rounded-md bg-gray-800 text-gray-300 hover:text-white hover:bg-gray-700 transition inline-flex items-center gap-1.5">
+                <span x-text="selectedAlert.source === 'github' ? '在 GitHub 查看' : '在 Polymarket 查看'"></span>
+                <span>&nearr;</span>
+              </a>
+            </div>
+
+            <!-- AI 摘要 -->
+            <div x-show="selectedAlert.enrichment?.summary" class="mb-6">
+              <h3 class="text-sm font-medium text-gray-400 mb-2">AI 摘要</h3>
+              <p class="text-gray-200" x-text="selectedAlert.enrichment.summary"></p>
+            </div>
+
+            <!-- AI 分析 -->
+            <div x-show="selectedAlert.enrichment?.analysis" class="mb-6">
+              <h3 class="text-sm font-medium text-gray-400 mb-2">AI 分析</h3>
+              <div x-html="renderAnalysis(selectedAlert)"></div>
+            </div>
+
+            <!-- 置信度 -->
+            <div x-show="selectedAlert.enrichment?.confidence" class="mb-6">
+              <h3 class="text-sm font-medium text-gray-400 mb-2">置信度</h3>
+              <div class="flex items-center gap-2">
+                <div class="w-32 h-2 bg-gray-700 rounded-full overflow-hidden">
+                  <div class="h-full bg-indigo-500 rounded-full" :style="'width:' + ((selectedAlert.enrichment.confidence || 0) * 100) + '%'"></div>
+                </div>
+                <span class="text-sm text-gray-300" x-text="((selectedAlert.enrichment.confidence || 0) * 100).toFixed(0) + '%'"></span>
+              </div>
+            </div>
+
+            <!-- 原始事件数据 -->
+            <details class="mt-4">
+              <summary class="text-sm text-gray-400 cursor-pointer hover:text-gray-300">原始事件数据</summary>
+              <pre class="mt-2 p-4 bg-gray-950 rounded-md text-xs text-gray-400 overflow-x-auto"
+                   x-text="JSON.stringify(selectedAlert.event, null, 2)"></pre>
+            </details>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- 告警列表视图 -->
+    <div x-show="currentView === 'alerts'" x-transition>
+      <div x-show="!loading && alerts.length === 0" class="text-center py-20 text-gray-500">
+        <p class="text-lg">暂无告警</p>
+        <p class="text-sm mt-1">当规则检测到异动时，告警将显示在此处</p>
+      </div>
+
+      <div class="space-y-3">
+        <template x-for="alert in alerts" :key="alert.id">
+          <div @click="selectAlert(alert)"
+               class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden cursor-pointer
+                      hover:border-gray-600 transition group fade-in">
+            <div class="p-4 border-l-4" :class="severityBorderColor(alert.severity)">
+              <div class="flex items-start justify-between">
+                <div class="flex-1 min-w-0">
+                  <h3 class="font-medium text-white truncate group-hover:text-indigo-300 transition"
+                      x-text="alert.title"></h3>
+                  <div class="flex items-center gap-3 mt-1 text-sm">
+                    <span class="text-gray-500" x-text="timeAgo(alert.created_at)"></span>
+                    <span class="px-2 py-0.5 rounded text-xs font-medium"
+                          :class="severityBadge(alert.severity)"
+                          x-text="severityLabel(alert.severity)"></span>
+                  </div>
+                  <p x-show="alert.enrichment?.summary"
+                     class="mt-2 text-sm text-gray-400 line-clamp-2"
+                     x-text="alert.enrichment.summary"></p>
+
+                  <!-- 信源特有标签 -->
+                  <div class="flex flex-wrap gap-2 mt-2">
+                    <template x-if="alert.source === 'github'">
+                      <div class="flex flex-wrap gap-2">
+                        <span x-show="alert.event?.data?.stars"
+                              class="text-xs bg-yellow-500/10 text-yellow-400 px-2 py-0.5 rounded">
+                          <span x-text="formatNumber(alert.event.data.stars)"></span> stars
+                        </span>
+                        <span x-show="alert.event?.data?.language"
+                              class="text-xs bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded"
+                              x-text="alert.event.data.language"></span>
+                        <span x-show="getGithubRecommendation(alert)"
+                              class="text-xs bg-green-500/10 text-green-400 px-2 py-0.5 rounded"
+                              x-text="getGithubRecommendation(alert)"></span>
+                      </div>
+                    </template>
+                    <template x-if="alert.source === 'polymarket'">
+                      <div class="flex flex-wrap gap-2">
+                        <span x-show="alert.event?.data?.midpoint_price != null"
+                              class="text-xs bg-purple-500/10 text-purple-400 px-2 py-0.5 rounded">
+                          价格: <span x-text="(alert.event.data.midpoint_price * 100).toFixed(1) + '%'"></span>
+                        </span>
+                        <span x-show="alert.event?.data?.volume_24h"
+                              class="text-xs bg-cyan-500/10 text-cyan-400 px-2 py-0.5 rounded">
+                          24h 成交量: $<span x-text="formatNumber(alert.event.data.volume_24h)"></span>
+                        </span>
+                        <span x-show="getPolymarketCause(alert)"
+                              class="text-xs bg-orange-500/10 text-orange-400 px-2 py-0.5 rounded"
+                              x-text="getPolymarketCause(alert)"></span>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+                <div class="flex items-center gap-2 ml-4 mt-1 shrink-0">
+                  <a x-show="getSourceUrl(alert)" :href="getSourceUrl(alert)" target="_blank"
+                     @click.stop
+                     class="text-xs px-2 py-1 rounded bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700 transition">
+                    打开 &nearr;
+                  </a>
+                  <span class="text-gray-600 group-hover:text-gray-400 transition">&rarr;</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- 分页 -->
+      <div x-show="alertsTotal > 20" class="flex items-center justify-center gap-4 mt-6">
+        <button @click="prevPage()" :disabled="alertsPage === 0"
+                class="px-3 py-1.5 text-sm bg-gray-800 rounded-md disabled:opacity-30 hover:bg-gray-700 transition">
+          上一页
+        </button>
+        <span class="text-sm text-gray-400"
+              x-text="(alertsPage * 20 + 1) + '-' + Math.min((alertsPage + 1) * 20, alertsTotal) + ' / 共 ' + alertsTotal + ' 条'"></span>
+        <button @click="nextPage()" :disabled="(alertsPage + 1) * 20 >= alertsTotal"
+                class="px-3 py-1.5 text-sm bg-gray-800 rounded-md disabled:opacity-30 hover:bg-gray-700 transition">
+          下一页
+        </button>
+      </div>
+    </div>
+
+    <!-- 规则视图 -->
+    <div x-show="currentView === 'rules'" x-transition class="fade-in">
+      <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-gray-800 text-left text-gray-400">
+              <th class="px-4 py-3 font-medium">规则名称</th>
+              <th class="px-4 py-3 font-medium">调度频率</th>
+              <th class="px-4 py-3 font-medium">触发方式</th>
+              <th class="px-4 py-3 font-medium">状态</th>
+              <th class="px-4 py-3 font-medium">下次执行</th>
+              <th class="px-4 py-3 font-medium">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="rule in filteredRules()" :key="rule.name">
+              <tr class="border-b border-gray-800/50 hover:bg-gray-800/30">
+                <td class="px-4 py-3">
+                  <span class="text-white font-mono text-xs" x-text="rule.name"></span>
+                </td>
+                <td class="px-4 py-3">
+                  <span class="text-xs bg-gray-800 px-2 py-1 rounded font-mono" x-text="rule.schedule"></span>
+                </td>
+                <td class="px-4 py-3">
+                  <span class="text-xs px-2 py-0.5 rounded"
+                        :class="rule.trigger === 'threshold'
+                          ? 'bg-orange-500/10 text-orange-400'
+                          : 'bg-blue-500/10 text-blue-400'"
+                        x-text="triggerLabel(rule.trigger)"></span>
+                </td>
+                <td class="px-4 py-3">
+                  <span class="text-xs px-2 py-0.5 rounded"
+                        :class="isJobPaused(rule.name) ? 'bg-red-500/10 text-red-400' : 'bg-green-500/10 text-green-400'"
+                        x-text="isJobPaused(rule.name) ? '已暂停' : '运行中'"></span>
+                </td>
+                <td class="px-4 py-3 text-gray-400 text-xs" x-text="getNextRun(rule.name)"></td>
+                <td class="px-4 py-3">
+                  <div class="flex items-center gap-2">
+                    <button @click="toggleRule(rule.name)"
+                            class="text-xs px-2 py-1 rounded transition"
+                            :class="isJobPaused(rule.name)
+                              ? 'bg-green-600/20 text-green-400 hover:bg-green-600/30'
+                              : 'bg-red-600/20 text-red-400 hover:bg-red-600/30'"
+                            x-text="isJobPaused(rule.name) ? '恢复' : '暂停'"></button>
+                    <button @click="manualTrigger(rule.name)"
+                            class="text-xs px-2 py-1 rounded bg-indigo-600/20 text-indigo-400 hover:bg-indigo-600/30 transition">
+                      手动触发
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            </template>
+            <tr x-show="filteredRules().length === 0">
+              <td colspan="6" class="px-4 py-8 text-center text-gray-500">该信源下暂无规则</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- 底部状态栏 -->
+  <footer class="fixed bottom-0 inset-x-0 bg-gray-900 border-t border-gray-800 px-6 py-2">
+    <div class="max-w-6xl mx-auto flex items-center justify-between text-xs text-gray-500">
+      <span x-show="lastUpdated">
+        上次更新: <span x-text="lastUpdated ? new Date(lastUpdated).toLocaleTimeString() : ''"></span>
+      </span>
+      <div class="flex items-center gap-3">
+        <label class="flex items-center gap-1.5 cursor-pointer">
+          <input type="checkbox" x-model="autoRefresh" class="accent-indigo-500">
+          <span>自动刷新 (30秒)</span>
+        </label>
+        <span class="text-gray-600" x-text="systemStatus.rules_loaded ? '已加载 ' + systemStatus.rules_loaded + ' 条规则' : ''"></span>
+      </div>
+    </div>
+  </footer>
+
+  <!-- 消息提示 -->
+  <div x-show="toast" x-transition
+       class="fixed top-4 right-4 px-4 py-2 rounded-lg text-sm shadow-lg z-50"
+       :class="toastType === 'error' ? 'bg-red-600 text-white' : 'bg-green-600 text-white'">
+    <span x-text="toast"></span>
+  </div>
+
+</div>
+
+<script>
+function dashboard() {
+  return {
+    sources: ['polymarket', 'github'],
+    currentTab: 'polymarket',
+    currentView: 'alerts',
+    systemStatus: {},
+    alerts: [],
+    alertsTotal: 0,
+    alertsPage: 0,
+    selectedAlert: null,
+    allRules: [],
+    schedulerJobs: [],
+    loading: false,
+    autoRefresh: true,
+    lastUpdated: null,
+    toast: '',
+    toastType: 'success',
+    _refreshInterval: null,
+
+    async init() {
+      await this.refresh();
+      this._refreshInterval = setInterval(() => {
+        if (this.autoRefresh) this.refresh();
+      }, 30000);
+    },
+
+    async refresh() {
+      this.loading = true;
+      try {
+        await Promise.all([
+          this.fetchStatus(),
+          this.fetchAlerts(),
+        ]);
+        this.lastUpdated = Date.now();
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    async fetchStatus() {
+      try {
+        const res = await fetch('/');
+        this.systemStatus = await res.json();
+      } catch (e) {
+        console.error('获取系统状态失败:', e);
+      }
+    },
+
+    async fetchAlerts() {
+      try {
+        const res = await fetch(`/alerts/${this.currentTab}?limit=20&offset=${this.alertsPage * 20}`);
+        const data = await res.json();
+        this.alerts = data.alerts || [];
+        this.alertsTotal = data.total || 0;
+      } catch (e) {
+        console.error('获取告警列表失败:', e);
+      }
+    },
+
+    async fetchRules() {
+      try {
+        const [rulesRes, jobsRes] = await Promise.all([
+          fetch('/debug/rules'),
+          fetch('/debug/scheduler'),
+        ]);
+        const rulesData = await rulesRes.json();
+        const jobsData = await jobsRes.json();
+        this.allRules = rulesData.rules || [];
+        this.schedulerJobs = jobsData.jobs || [];
+      } catch (e) {
+        console.error('获取规则列表失败:', e);
+      }
+    },
+
+    async reloadRules() {
+      try {
+        const res = await fetch('/system/reload', { method: 'POST' });
+        const data = await res.json();
+        this.showToast(`已重载 ${data.count} 条规则`, 'success');
+        await this.fetchRules();
+        await this.fetchStatus();
+      } catch (e) {
+        this.showToast('重载规则失败', 'error');
+      }
+    },
+
+    switchSource(tab) {
+      this.currentTab = tab;
+      this.alertsPage = 0;
+      this.selectedAlert = null;
+      if (this.currentView === 'detail') this.currentView = 'alerts';
+      this.fetchAlerts();
+      if (this.currentView === 'rules') this.fetchRules();
+    },
+
+    selectAlert(alert) {
+      this.selectedAlert = alert;
+      this.currentView = 'detail';
+    },
+
+    prevPage() {
+      if (this.alertsPage > 0) {
+        this.alertsPage--;
+        this.fetchAlerts();
+      }
+    },
+
+    nextPage() {
+      if ((this.alertsPage + 1) * 20 < this.alertsTotal) {
+        this.alertsPage++;
+        this.fetchAlerts();
+      }
+    },
+
+    filteredRules() {
+      return this.allRules.filter(r => r.source === this.currentTab);
+    },
+
+    getNextRun(ruleName) {
+      const job = this.schedulerJobs.find(j => j.id === `rule:${ruleName}` || j.name === ruleName);
+      if (!job || !job.next_run || job.paused) return '-';
+      return new Date(job.next_run).toLocaleString();
+    },
+
+    isJobPaused(ruleName) {
+      const job = this.schedulerJobs.find(j => j.id === `rule:${ruleName}` || j.name === ruleName);
+      return job?.paused || false;
+    },
+
+    async toggleRule(ruleName) {
+      const paused = this.isJobPaused(ruleName);
+      const action = paused ? 'resume' : 'pause';
+      try {
+        const res = await fetch(`/debug/scheduler/${action}/${ruleName}`, { method: 'POST' });
+        const data = await res.json();
+        if (res.ok) {
+          this.showToast(`规则 ${ruleName} 已${paused ? '恢复' : '暂停'}`, 'success');
+        } else {
+          this.showToast(data.detail || '操作失败', 'error');
+        }
+        await this.fetchRules();
+      } catch (e) {
+        this.showToast(`${paused ? '恢复' : '暂停'}规则失败`, 'error');
+      }
+    },
+
+    async manualTrigger(ruleName) {
+      this.showToast(`正在触发 ${ruleName}...`, 'success');
+      try {
+        const res = await fetch(`/debug/trigger/${ruleName}`, { method: 'POST' });
+        const data = await res.json();
+        if (res.ok) {
+          this.showToast(`${ruleName}: 结果=${data.result} (耗时 ${data.elapsed_seconds}秒)`, 'success');
+          await this.fetchAlerts();
+        } else {
+          this.showToast(data.detail || '触发失败', 'error');
+        }
+      } catch (e) {
+        this.showToast('触发请求失败', 'error');
+      }
+    },
+
+    // --- 显示辅助 ---
+
+    sourceLabel(source) {
+      const map = { polymarket: '预测市场', github: 'GitHub 热门' };
+      return map[source] || source;
+    },
+
+    severityLabel(severity) {
+      const map = { critical: '严重', high: '高', medium: '中', low: '低' };
+      return map[severity] || severity;
+    },
+
+    triggerLabel(trigger) {
+      const map = { threshold: '阈值触发', batch: '批量处理' };
+      return map[trigger] || trigger;
+    },
+
+    severityBorderColor(severity) {
+      const map = {
+        critical: 'border-red-500',
+        high: 'border-orange-500',
+        medium: 'border-yellow-500',
+        low: 'border-green-500',
+      };
+      return map[severity] || 'border-gray-600';
+    },
+
+    severityBadge(severity) {
+      const map = {
+        critical: 'bg-red-500/20 text-red-400',
+        high: 'bg-orange-500/20 text-orange-400',
+        medium: 'bg-yellow-500/20 text-yellow-400',
+        low: 'bg-green-500/20 text-green-400',
+      };
+      return map[severity] || 'bg-gray-500/20 text-gray-400';
+    },
+
+    timeAgo(dateStr) {
+      if (!dateStr) return '';
+      const diff = Date.now() - new Date(dateStr).getTime();
+      const mins = Math.floor(diff / 60000);
+      if (mins < 1) return '刚刚';
+      if (mins < 60) return mins + ' 分钟前';
+      const hours = Math.floor(mins / 60);
+      if (hours < 24) return hours + ' 小时前';
+      const days = Math.floor(hours / 24);
+      return days + ' 天前';
+    },
+
+    formatNumber(n) {
+      if (n == null) return '';
+      if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+      if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+      return String(n);
+    },
+
+    parseEnrichmentAnalysis(alert) {
+      if (!alert?.enrichment?.analysis) return null;
+      try {
+        return JSON.parse(alert.enrichment.analysis);
+      } catch {
+        return null;
+      }
+    },
+
+    getGithubRecommendation(alert) {
+      const parsed = this.parseEnrichmentAnalysis(alert);
+      return parsed?.recommendation || '';
+    },
+
+    getSourceUrl(alert) {
+      if (!alert?.event?.data) return '';
+      if (alert.source === 'github') {
+        return alert.event.data.html_url || '';
+      }
+      if (alert.source === 'polymarket') {
+        const slug = alert.event.data.event_slug || alert.event.data.market_slug;
+        return slug ? `https://polymarket.com/event/${slug}` : '';
+      }
+      return '';
+    },
+
+    getPolymarketCause(alert) {
+      const parsed = this.parseEnrichmentAnalysis(alert);
+      return parsed?.likely_cause || '';
+    },
+
+    renderAnalysis(alert) {
+      if (!alert?.enrichment?.analysis) return '';
+      const parsed = this.parseEnrichmentAnalysis(alert);
+      if (!parsed) {
+        return `<p class="text-gray-300 whitespace-pre-wrap">${this.escapeHtml(alert.enrichment.analysis)}</p>`;
+      }
+
+      let html = '';
+
+      if (parsed.highlights) {
+        html += '<div class="mb-3"><span class="text-xs font-medium text-gray-400">核心亮点</span>';
+        html += '<ul class="mt-1 space-y-1">';
+        for (const h of Array.isArray(parsed.highlights) ? parsed.highlights : [parsed.highlights]) {
+          html += `<li class="text-sm text-gray-300 flex items-start gap-2"><span class="text-indigo-400 mt-0.5">&#8226;</span>${this.escapeHtml(h)}</li>`;
+        }
+        html += '</ul></div>';
+      }
+
+      if (parsed.tech_stack) {
+        const stacks = Array.isArray(parsed.tech_stack) ? parsed.tech_stack : [parsed.tech_stack];
+        html += '<div class="mb-3"><span class="text-xs font-medium text-gray-400">技术栈</span>';
+        html += '<div class="flex flex-wrap gap-1.5 mt-1">';
+        for (const t of stacks) {
+          html += `<span class="text-xs bg-gray-800 text-gray-300 px-2 py-0.5 rounded">${this.escapeHtml(t)}</span>`;
+        }
+        html += '</div></div>';
+      }
+
+      if (parsed.innovation_score != null) {
+        html += `<div class="mb-3"><span class="text-xs font-medium text-gray-400">创新评分</span>`;
+        html += `<span class="ml-2 text-sm font-semibold text-indigo-300">${parsed.innovation_score}/10</span></div>`;
+      }
+
+      if (parsed.category) {
+        html += `<div class="mb-3"><span class="text-xs font-medium text-gray-400">分类</span>`;
+        html += `<span class="ml-2 text-sm text-gray-300">${this.escapeHtml(parsed.category)}</span></div>`;
+      }
+
+      if (parsed.recommendation) {
+        html += `<div class="mb-3"><span class="text-xs font-medium text-gray-400">推荐等级</span>`;
+        html += `<span class="ml-2 text-sm px-2 py-0.5 rounded bg-green-500/10 text-green-400">${this.escapeHtml(parsed.recommendation)}</span></div>`;
+      }
+
+      if (parsed.analysis && typeof parsed.analysis === 'string') {
+        html += `<div class="mb-3"><span class="text-xs font-medium text-gray-400">分析详情</span>`;
+        html += `<p class="mt-1 text-sm text-gray-300">${this.escapeHtml(parsed.analysis)}</p></div>`;
+      }
+
+      if (parsed.likely_cause) {
+        html += `<div class="mb-3"><span class="text-xs font-medium text-gray-400">可能原因</span>`;
+        html += `<p class="mt-1 text-sm text-orange-300">${this.escapeHtml(parsed.likely_cause)}</p></div>`;
+      }
+
+      if (parsed.action_items) {
+        const items = Array.isArray(parsed.action_items) ? parsed.action_items : [parsed.action_items];
+        html += '<div class="mb-3"><span class="text-xs font-medium text-gray-400">建议操作</span>';
+        html += '<ul class="mt-1 space-y-1">';
+        for (const item of items) {
+          html += `<li class="text-sm text-gray-300 flex items-start gap-2"><span class="text-yellow-400 mt-0.5">&#9679;</span>${this.escapeHtml(item)}</li>`;
+        }
+        html += '</ul></div>';
+      }
+
+      if (parsed.severity) {
+        html += `<div class="mb-3"><span class="text-xs font-medium text-gray-400">AI 严重程度</span>`;
+        html += `<span class="ml-2 text-xs px-2 py-0.5 rounded ${this.severityBadge(parsed.severity)}">${this.escapeHtml(parsed.severity)}</span></div>`;
+      }
+
+      if (!html) {
+        html = `<pre class="text-xs text-gray-400 bg-gray-950 p-3 rounded overflow-x-auto">${this.escapeHtml(JSON.stringify(parsed, null, 2))}</pre>`;
+      }
+
+      return html;
+    },
+
+    escapeHtml(str) {
+      if (typeof str !== 'string') return String(str);
+      return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    },
+
+    showToast(msg, type = 'success') {
+      this.toast = msg;
+      this.toastType = type;
+      setTimeout(() => { this.toast = ''; }, 3000);
+    },
+  };
+}
+</script>
+
+</body>
+</html>

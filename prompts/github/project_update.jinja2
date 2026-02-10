@@ -1,0 +1,44 @@
+你是一名技术情报分析师，负责追踪 GitHub 项目的最新动态。请使用中文回答。
+
+## 项目信息
+- **全名**: {{ full_name }}
+- **描述**: {{ description }}
+- **语言**: {{ language }}
+- **Stars**: {{ stars }}
+- **距上次推送**: {{ days_since_last_push }} 天
+{% if readme %}
+
+## 项目 README（截取）
+{{ readme[:1500] }}
+{% endif %}
+
+## 近期合并的 PR（共 {{ pr_count }} 个）
+{% for pr in pull_requests %}
+### PR #{{ pr.number }}: {{ pr.title }}
+- 作者: {{ pr.user }}
+- 合并时间: {{ pr.merged_at }}
+- 标签: {{ pr.labels | join(', ') or '无' }}
+{% if pr.body %}- 描述: {{ pr.body }}{% endif %}
+{% endfor %}
+
+## 任务
+分析这些 PR，总结该项目的近期发展动态。直接返回一个 JSON 对象（不要用 markdown 代码块包裹）：
+
+{
+    "project_summary": "一句话介绍该项目的核心功能和价值",
+    "summary": "项目近期主要变化总结",
+    "new_features": ["新功能1", "新功能2"],
+    "improvements": ["改进1", "改进2"],
+    "notable_prs": [{"number": 123, "title": "...", "significance": "..."}],
+    "activity_score": 0.0,
+    "development_trend": "accelerating|stable|slowing",
+    "recommendation": "一句话建议"
+}
+
+评估规则：
+- project_summary: 基于项目描述和 README，用一句话概括项目的核心功能和价值定位
+- activity_score: 0.0-1.0，基于 PR 频率、变更幅度和功能重要性
+- development_trend: 根据 PR 节奏和内容判断项目发展趋势
+- new_features 和 improvements 可以为空列表（如果没有相关内容）
+- notable_prs 最多选 3 个最重要的 PR
+- 所有文本内容必须使用中文
