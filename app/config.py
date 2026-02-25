@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     hn_rising_min_points: int = 30
     hn_max_stories_per_run: int = 15
 
+    # Signal Stream (for poly_trader)
+    signal_stream_key: str = "stream:polymarket:signals"
+
     # Alert storage
     alert_max_per_source: int = 100
 

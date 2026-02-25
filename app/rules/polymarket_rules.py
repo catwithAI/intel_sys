@@ -338,8 +338,16 @@ async def _tier2_analyze(
             await corroboration_svc.close()
 
         # Store alert
-        await ctx.db.lpush("alerts:polymarket", alert.model_dump_json())
+        alert_json = alert.model_dump_json()
+        await ctx.db.lpush("alerts:polymarket", alert_json)
         await ctx.db.ltrim("alerts:polymarket", 0, settings.alert_max_per_source - 1)
+
+        # Publish to Redis Stream for poly_trader consumption
+        await ctx.db.xadd(
+            settings.signal_stream_key,
+            {"alert": alert_json},
+            maxlen=1000,
+        )
 
         # Set dedup key (24h TTL)
         await ctx.db.set(alert_dedup_key, "1", ex=86400)

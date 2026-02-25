@@ -42,7 +42,7 @@ def _read_pushed_ts(raw: str | None, snapshot_raw: str | None) -> int | None:
 
 @rule_registry.register(
     source="github",
-    schedule="cron:0 9 * * *",
+    schedule="cron:0 17 * * *",
     trigger="batch",
 )
 async def discover_trending_repos(ctx: RuleContext) -> bool:
