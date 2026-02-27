@@ -305,6 +305,11 @@ async def _tier2_analyze(
             logger.exception("AI analysis failed for market %s", condition_id)
             ai_result = {}
 
+        # Skip alert if AI analysis failed or returned no useful content
+        if not ai_result or not ai_result.get("summary"):
+            logger.warning("Skipping market %s: AI returned empty result", condition_id)
+            continue
+
         ai_severity = ai_result.get("severity", "medium")
         severity_map = {"low": Severity.LOW, "medium": Severity.MEDIUM, "high": Severity.HIGH, "critical": Severity.CRITICAL}
         severity = severity_map.get(ai_severity, Severity.MEDIUM)

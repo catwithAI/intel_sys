@@ -5,6 +5,7 @@ import hmac
 import base64
 import json
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -75,6 +76,8 @@ class FeishuWebhookDelivery(BaseDelivery):
             elements = self._format_polymarket_card(alert)
         elif alert.source == SourceType.HACKERNEWS:
             elements = self._format_hackernews_card(alert)
+        elif alert.source == SourceType.CORRELATION:
+            elements = self._format_correlation_card(alert)
         else:
             elements = self._format_generic_card(alert)
 
@@ -392,6 +395,130 @@ class FeishuWebhookDelivery(BaseDelivery):
         return elements
 
     # ------------------------------------------------------------------
+    # Correlation cards
+    # ------------------------------------------------------------------
+    def _format_correlation_card(self, alert: Alert) -> list[dict]:
+        data = alert.event.data
+        ai_data: dict = {}
+        if alert.enrichment.analysis:
+            try:
+                ai_data = json.loads(alert.enrichment.analysis)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        title = data.get("title", "")
+        reasoning = ai_data.get("reasoning", alert.enrichment.summary or "")
+        direction = ai_data.get("investment_direction", "")
+        chain = ai_data.get("chain", data.get("chain", []))
+        confidence = ai_data.get("confidence", data.get("confidence", 0))
+        timeframe = ai_data.get("timeframe", data.get("timeframe", ""))
+        risks = ai_data.get("risks", data.get("risks", ""))
+        category = ai_data.get("category", data.get("category", ""))
+
+        # New dimensions (from data, populated by correlation_rules)
+        cycle_phase = data.get("cycle_phase", "")
+        crowdedness = data.get("crowdedness", 0)
+        marginal_signals = data.get("marginal_signals", {})
+        related_assets = data.get("related_assets", [])
+        next_catalyst = data.get("next_catalyst", {})
+
+        category_map = {
+            "causal": "因果链",
+            "supply_demand": "供需关系",
+            "hedging": "对冲避险",
+            "policy": "政策传导",
+            "sentiment": "市场情绪",
+        }
+        cycle_map = {
+            "genesis": "孕育期",
+            "consensus": "共识期",
+            "euphoria": "狂热期",
+            "denial": "否认期",
+            "capitulation": "投降期",
+            "recovery": "复苏期",
+        }
+
+        # -- Header line: category | cycle | crowdedness (always visible) --
+        header_parts = []
+        if category:
+            header_parts.append(f"**{category_map.get(category, category)}**")
+        if cycle_phase:
+            header_parts.append(f"周期: {cycle_map.get(cycle_phase, cycle_phase)}")
+        if crowdedness:
+            header_parts.append(f"拥挤度 {crowdedness}%")
+        header_line = " | ".join(header_parts) if header_parts else ""
+
+        # -- Summary section (always visible) --
+        summary_lines = [f"**{title}**"]
+        if header_line:
+            summary_lines.append(header_line)
+        if reasoning:
+            summary_lines.append(f"\n{reasoning}")
+        if direction:
+            summary_lines.append(f"\n**投资方向**: {direction}")
+        elements: list[dict] = [_md("\n".join(summary_lines))]
+
+        # -- Marginal signals (always visible, if present) --
+        if marginal_signals and (
+            marginal_signals.get("positive") or marginal_signals.get("negative")
+        ):
+            sig_lines = ["**今日边际变化**"]
+            positive = marginal_signals.get("positive", [])
+            negative = marginal_signals.get("negative", [])
+            if positive:
+                sig_lines.append(f"▲ 正向  {'；'.join(positive)}")
+            if negative:
+                sig_lines.append(f"▼ 负向  {'；'.join(negative)}")
+            elements.append(_md("\n".join(sig_lines)))
+
+        # -- Related assets (always visible, if present) --
+        if related_assets:
+            direction_arrow = {"up": "↑", "down": "↓"}
+            asset_parts = []
+            for a in related_assets:
+                symbol = a.get("symbol", "")
+                arrow = direction_arrow.get(a.get("expected_direction", ""), "")
+                rationale = a.get("rationale", "")
+                part = f"**{symbol}** {arrow}"
+                if rationale:
+                    part += f" {rationale}"
+                asset_parts.append(part)
+            elements.append(_md("**相关标的**  " + " | ".join(asset_parts)))
+
+        # -- Event chain (collapsed) --
+        if chain:
+            chain_lines = [f"{i + 1}. {e}" for i, e in enumerate(chain)]
+            elements.append(
+                _collapsible("关联事件链", [_md("\n".join(chain_lines))])
+            )
+
+        # -- Catalyst & timeframe (collapsed) --
+        catalyst_lines = []
+        if next_catalyst and next_catalyst.get("event"):
+            date_str = next_catalyst.get("date", "")
+            catalyst_lines.append(
+                f"**下个催化剂**: {next_catalyst['event']}"
+                + (f" ({date_str})" if date_str else "")
+            )
+        if timeframe:
+            catalyst_lines.append(f"**时间框架**: {timeframe}")
+        if catalyst_lines:
+            elements.append(
+                _collapsible("催化剂与时间窗口", [_md("\n".join(catalyst_lines))])
+            )
+
+        # -- Risk (collapsed) --
+        risk_lines = []
+        if risks:
+            risk_lines.append(risks)
+        risk_lines.append(f"置信度: {confidence:.2f}")
+        elements.append(
+            _collapsible("风险提示", [_md("\n".join(risk_lines))])
+        )
+
+        return elements
+
+    # ------------------------------------------------------------------
     # Corroboration panel
     # ------------------------------------------------------------------
     def _format_corroboration_panel(self, corr: dict) -> dict | None:
@@ -452,8 +579,183 @@ class FeishuWebhookDelivery(BaseDelivery):
         return [_md(alert.enrichment.summary or alert.title)]
 
     # ------------------------------------------------------------------
+    # GitHub digest card (batch)
+    # ------------------------------------------------------------------
+    def _format_github_digest_card(self, alerts: list[Alert]) -> dict[str, Any]:
+        """Aggregate multiple GitHub alerts into a single digest card."""
+        new_alerts = [a for a in alerts if not a.title.startswith("[更新]")]
+        update_alerts = [a for a in alerts if a.title.startswith("[更新]")]
+
+        # Header
+        parts = []
+        if new_alerts:
+            parts.append(f"{len(new_alerts)} 个新项目")
+        if update_alerts:
+            parts.append(f"{len(update_alerts)} 个更新")
+        header_text = f"GitHub Trending 日报 ({' · '.join(parts)})"
+
+        # Determine header color from highest severity
+        severity_order = [Severity.LOW, Severity.MEDIUM, Severity.HIGH, Severity.CRITICAL]
+        best_idx = 0
+        for a in alerts:
+            try:
+                idx = severity_order.index(a.severity)
+            except ValueError:
+                idx = 0
+            if idx > best_idx:
+                best_idx = idx
+        color = _SEVERITY_COLORS.get(severity_order[best_idx], "blue")
+
+        elements: list[dict] = []
+
+        # -- New projects: title+desc visible, details collapsed --
+        for alert in new_alerts:
+            event = alert.event
+            lang = event.data.get("language", "?")
+            stars = event.data.get("stars", 0)
+            forks = event.data.get("forks", 0)
+            strategy = event.metadata.get("strategy", "unknown")
+            desc = event.data.get("description", "")
+            summary = alert.enrichment.summary or ""
+            confidence = alert.enrichment.confidence
+            url = f"https://github.com/{event.source_id}"
+
+            # Delta display
+            delta_str = ""
+            if event.data.get("star_delta"):
+                delta_str = f" +{event.data['star_delta']}Δ"
+            elif event.data.get("current_period_stars"):
+                delta_str = f" +{event.data['current_period_stars']}☆today"
+
+            # Title line (always visible)
+            title_line = f"**[{lang}] [{event.source_id}]({url})** ({stars:,}★{delta_str})"
+            visible_lines = [title_line]
+            if desc:
+                visible_lines.append(desc)
+
+            elements.append(_md("\n".join(visible_lines)))
+
+            # Collapsed detail panel
+            detail_lines = []
+            if summary:
+                detail_lines.append(f"**AI 评估**: {summary}")
+            detail_lines.append(
+                f"语言: {lang} | Star: {stars:,} | Fork: {forks:,}\n"
+                f"策略: {strategy} | 置信度: {confidence:.2f}"
+            )
+            detail_lines.append(f"[查看仓库]({url})")
+
+            # Corroboration
+            corr_panel = self._format_corroboration_panel(alert.corroboration)
+
+            detail_elements = [_md("\n".join(detail_lines))]
+            if corr_panel:
+                detail_elements.append(corr_panel)
+
+            elements.append(_collapsible("详细信息", detail_elements))
+
+        # -- Separator between new and update sections --
+        if new_alerts and update_alerts:
+            elements.append({"tag": "hr"})
+
+        # -- Update projects: entire project collapsed --
+        for alert in update_alerts:
+            event = alert.event
+            stars = event.data.get("stars", 0)
+            url = f"https://github.com/{event.source_id}"
+
+            # Parse AI analysis JSON
+            ai_data: dict = {}
+            if alert.enrichment.analysis:
+                try:
+                    ai_data = json.loads(alert.enrichment.analysis)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            # Build inner content (reuse update card logic)
+            inner_elements = self._format_github_update_card(alert)
+
+            # Corroboration
+            corr_panel = self._format_corroboration_panel(alert.corroboration)
+            if corr_panel:
+                inner_elements.append(corr_panel)
+
+            # PR count from title or data
+            pr_count = len(event.data.get("merged_prs", []))
+            if not pr_count:
+                # Try to extract from title like "[更新] user/repo (5000★ | 3 PRs)"
+                m = re.search(r"(\d+)\s*PRs?\)?$", alert.title)
+                if m:
+                    pr_count = int(m.group(1))
+
+            collapse_title = f"[更新] {event.source_id} ({stars:,}★"
+            if pr_count:
+                collapse_title += f" | {pr_count} PRs"
+            collapse_title += ")"
+
+            elements.append(_collapsible(collapse_title, inner_elements))
+
+        return {
+            "msg_type": "interactive",
+            "card": {
+                "schema": "2.0",
+                "header": {
+                    "title": {"tag": "plain_text", "content": header_text},
+                    "template": color,
+                },
+                "body": {
+                    "elements": elements,
+                },
+            },
+        }
+
+    # ------------------------------------------------------------------
     # Send
     # ------------------------------------------------------------------
+    async def send_batch(self, alerts: list[Alert]) -> bool:
+        """Send multiple alerts as a single message.
+
+        GitHub alerts are aggregated into one digest card.
+        Other source alerts fall back to individual sends.
+        """
+        if not alerts:
+            return False
+
+        github_alerts = [a for a in alerts if a.source == SourceType.GITHUB]
+        other_alerts = [a for a in alerts if a.source != SourceType.GITHUB]
+
+        results: list[bool] = []
+
+        # Send GitHub digest as one card
+        if github_alerts:
+            payload = self._format_github_digest_card(github_alerts)
+
+            if self._secret:
+                ts = int(time.time())
+                payload["timestamp"] = str(ts)
+                payload["sign"] = self._gen_sign(ts)
+
+            try:
+                resp = await self._http.post(self._webhook_url, json=payload)
+                data = resp.json()
+                if data.get("code") == 0:
+                    logger.info(
+                        "Feishu GitHub digest sent: %d alerts", len(github_alerts)
+                    )
+                    results.append(True)
+                else:
+                    logger.warning("Feishu GitHub digest error: %s", data)
+                    results.append(False)
+            except Exception:
+                logger.exception("Failed to send GitHub digest (%d alerts)", len(github_alerts))
+                results.append(False)
+
+        # Other sources: send individually
+        for a in other_alerts:
+            results.append(await self.send(a))
+
+        return any(results)
+
     async def send(self, alert: Alert) -> bool:
         payload = self._format_alert(alert)
 

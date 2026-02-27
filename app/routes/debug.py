@@ -43,17 +43,44 @@ async def debug_events(source: str, request: Request):
 
 @router.get("/debug/state/{key:path}")
 async def debug_state(key: str, request: Request):
-    """Query a Redis key for debugging."""
+    """Query a Redis key for debugging. Supports string, list, set, zset, hash."""
+    import json as _json
+
     redis = request.app.state.redis
-    val = await redis.get(key)
-    if val is None:
-        return {"key": key, "value": None, "exists": False}
-    try:
-        import json
-        parsed = json.loads(val)
-        return {"key": key, "value": parsed, "exists": True}
-    except (json.JSONDecodeError, TypeError):
-        return {"key": key, "value": val.decode() if isinstance(val, bytes) else val, "exists": True}
+    key_type = await redis.type(key)
+
+    if key_type == "none":
+        return {"key": key, "type": "none", "value": None, "exists": False}
+
+    if key_type == "string":
+        val = await redis.get(key)
+        try:
+            parsed = _json.loads(val)
+            return {"key": key, "type": "string", "value": parsed, "exists": True}
+        except (_json.JSONDecodeError, TypeError):
+            return {"key": key, "type": "string", "value": val, "exists": True}
+
+    if key_type == "list":
+        val = await redis.lrange(key, 0, 9)
+        return {"key": key, "type": "list", "length": await redis.llen(key), "value": val[:10], "exists": True}
+
+    if key_type == "zset":
+        count = await redis.zcard(key)
+        # Return last 10 (most recent by score)
+        val = await redis.zrevrange(key, 0, 9, withscores=True)
+        items = [{"member": m, "score": s} for m, s in val]
+        return {"key": key, "type": "zset", "count": count, "value": items, "exists": True}
+
+    if key_type == "set":
+        count = await redis.scard(key)
+        val = await redis.srandmember(key, 10)
+        return {"key": key, "type": "set", "count": count, "value": val, "exists": True}
+
+    if key_type == "hash":
+        val = await redis.hgetall(key)
+        return {"key": key, "type": "hash", "value": val, "exists": True}
+
+    return {"key": key, "type": key_type, "value": None, "exists": True}
 
 
 @router.get("/debug/scheduler")

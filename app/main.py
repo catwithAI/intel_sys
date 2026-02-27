@@ -58,6 +58,8 @@ async def execute_rule(
         logger.info("Executing rule: %s", rule_name)
         result = await meta.fn(ctx)
         logger.info("Rule %s completed: result=%s", rule_name, result)
+    except asyncio.CancelledError:
+        logger.info("Rule %s cancelled (shutdown)", rule_name)
     except Exception:
         logger.exception("Rule %s failed", rule_name)
 

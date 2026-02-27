@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -69,6 +70,9 @@ class AIClient:
                 return "{}"
             data = resp.json()
             return data["choices"][0]["message"]["content"]
+        except asyncio.CancelledError:
+            logger.warning("OpenRouter API call cancelled (shutdown?)")
+            raise
         except Exception:
             logger.exception("OpenRouter API call failed")
             return "{}"
