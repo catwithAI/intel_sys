@@ -13,6 +13,10 @@ class SourceType(str, Enum):
     GITHUB = "github"
     HACKERNEWS = "hackernews"
     TWITTER = "twitter"
+    CLS = "cls"
+    REDDIT = "reddit"
+    XUEQIU = "xueqiu"
+    CORRELATION = "correlation"
 
 
 class Severity(str, Enum):
@@ -54,6 +58,20 @@ class Alert(BaseModel):
     enrichment: AIEnrichment = Field(default_factory=AIEnrichment)
     corroboration: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class MemoryEvent(BaseModel):
+    """Compressed event stored in the memory pool."""
+
+    id: str
+    source: SourceType
+    title: str
+    summary: str
+    category: str = ""
+    entities: list[str] = []
+    sentiment: str = "neutral"
+    timestamp: float
+    url: str = ""
 
 
 class RuleConfig(BaseModel):

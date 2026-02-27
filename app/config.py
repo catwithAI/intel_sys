@@ -67,6 +67,37 @@ class Settings(BaseSettings):
     # Alert storage
     alert_max_per_source: int = 100
 
+    # 财联社 (CLS)
+    cls_base_url: str = "https://www.cls.cn/nodeapi"
+    cls_fetch_limit: int = 50
+
+    # Reddit
+    reddit_client_id: str = ""
+    reddit_client_secret: str = ""
+    reddit_user_agent: str = "intel_sys/0.1"
+    reddit_subreddits: list[str] = ["wallstreetbets", "investing", "stocks"]
+    reddit_min_score: int = 50
+    reddit_fetch_limit: int = 25
+
+    # 雪球 (Xueqiu)
+    xueqiu_cookie: str = ""
+    xueqiu_fetch_limit: int = 20
+
+    # Event Memory Pool
+    memory_pool_key: str = "memory:events"
+    memory_pool_ttl_days: int = 7
+    memory_compress_max_chars: int = 100
+
+    # Correlation Engine
+    correlation_interval: int = 1800
+    correlation_lookback_hours: int = 168
+    correlation_min_events: int = 10
+    correlation_context_max_chars: int = 12000
+
+    # Insight Delivery (独立飞书 webhook)
+    feishu_insight_webhook_url: str = ""
+    feishu_insight_webhook_secret: str = ""
+
     @classmethod
     def settings_customise_sources(cls, settings_cls, **kwargs):
         """Allow JSON strings for list fields from env vars."""
