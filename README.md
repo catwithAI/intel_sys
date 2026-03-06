@@ -11,7 +11,11 @@ Source → Event → Rule(过滤 + 评分) → AI(富化分析) → Alert → De
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  分发层 (Delivery)                                           │
-│  飞书 Webhook (Card v2 + 折叠面板)  ·  REST API               │
+│  飞书 Webhook (Card v2 + 折叠面板 + Digest 聚合卡片)          │
+│  REST API · Insight 独立 Webhook                             │
+├──────────────────────────────────────────────────────────────┤
+│  关联推理层 (Correlation)                                     │
+│  事件记忆池 · LLM 跨事件关联 · 投资洞察                        │
 ├──────────────────────────────────────────────────────────────┤
 │  佐证层 (Corroboration)                                      │
 │  HN Algolia + Twitter API 交叉验证  ·  置信度增减              │
@@ -24,7 +28,8 @@ Source → Event → Rule(过滤 + 评分) → AI(富化分析) → Alert → De
 │  RuleRegistry  ·  装饰器注册  ·  调度声明                      │
 ├──────────────────────────────────────────────────────────────┤
 │  信源层 (Source)                                              │
-│  Polymarket  ·  GitHub  ·  Hacker News  ·  Twitter(佐证)     │
+│  Polymarket · GitHub · Hacker News · 财联社 · 雪球 · Reddit   │
+│  Twitter(佐证)                                               │
 ├──────────────────────────────────────────────────────────────┤
 │  引擎层 (Engine)                                              │
 │  FastAPI  ·  asyncio  ·  APScheduler  ·  Redis               │
@@ -36,11 +41,12 @@ Source → Event → Rule(过滤 + 评分) → AI(富化分析) → Alert → De
 | 组件 | 说明 |
 |------|------|
 | **引擎层** | FastAPI 应用，通过 async lifespan 管理生命周期，APScheduler 处理 cron/interval 调度，Redis 持久化状态 |
-| **信源层** | 数据适配器，从外部 API 获取原始数据，产出标准化 `Event` 对象。当前 4 个信源：Polymarket、GitHub、Hacker News、Twitter（仅佐证用） |
+| **信源层** | 数据适配器，从外部 API 获取原始数据，产出标准化 `Event` 对象。当前 7 个信源：Polymarket、GitHub、Hacker News、财联社、雪球、Reddit、Twitter（仅佐证用） |
 | **逻辑层** | 通过装饰器注册的异步函数，对事件进行过滤/评分，决定是否触发 AI 分析 |
 | **智能层** | OpenRouter LLM 客户端 + Jinja2 Prompt 模板，产出结构化 JSON 分析结果 |
 | **佐证层** | 对告警搜索 HN/Twitter 佐证，计算置信度增减（-0.05 ~ +0.30），跨平台命中额外加分 |
-| **分发层** | 告警存储在 Redis 中，通过 REST API 查询；飞书 Webhook 机器人实时推送（Card JSON v2 + collapsible_panel 折叠详情，v1 自动降级） |
+| **关联推理层** | 事件记忆池收集多信源事件，LLM 定期进行跨事件关联推理，发现投资洞察和因果链 |
+| **分发层** | 告警存储在 Redis 中，通过 REST API 查询；飞书 Webhook 机器人实时推送（Card JSON v2 + Digest 聚合卡片），关联洞察通过独立 Webhook 推送 |
 
 ### 数据流
 
@@ -57,7 +63,14 @@ APScheduler 间隔触发(90s)
       Redis 基线: 成交量 EMA / Orderbook 失衡 / 价格速度(Redis 快照)
       LLM 分析: 中文翻译 + 具体交易建议(买入项+价格+回报率) + 地缘影响
       HN 佐证 (跳过 Twitter 避免 429)
-  → 存储告警到 Redis (24h 去重) → 飞书推送
+  → 告警缓冲到 Redis → 6 小时 Digest 聚合推送
+```
+
+**Polymarket 6 小时 Digest**（每 6 小时）：
+
+```
+APScheduler Cron 触发(0 */6 * * *)
+  → 读取 6 小时缓冲区告警 → 聚合为单张 Digest 卡片 → 飞书推送
 ```
 
 **GitHub Trending 项目发现**（每日 09:00）：
@@ -82,6 +95,39 @@ APScheduler 间隔触发(7200s)
   → 存储告警 → 飞书推送
 ```
 
+**财联社电报采集**（每 2 分钟）：
+
+```
+APScheduler 间隔触发(120s)
+  → 财联社 API: 获取最新电报列表
+  → LLM 批量压缩 → 写入事件记忆池（不直接产生 Alert）
+```
+
+**雪球 7x24 快讯采集**（每 5 分钟）：
+
+```
+APScheduler 间隔触发(300s)
+  → 雪球 API: 获取快讯列表（需 Cookie 认证）
+  → LLM 批量压缩 → 写入事件记忆池（不直接产生 Alert）
+```
+
+**Reddit 热门帖子采集**（每 30 分钟）：
+
+```
+APScheduler 间隔触发(1800s)
+  → Reddit OAuth2 API: 获取各 subreddit 热门帖子
+  → LLM 批量压缩 → 写入事件记忆池（不直接产生 Alert）
+```
+
+**跨事件关联推理**（每 30 分钟）：
+
+```
+APScheduler 间隔触发(1800s)
+  → 从记忆池读取近 7 天事件 → 按时间分组构建 Digest
+  → LLM 跨事件关联推理 → 发现因果链、投资方向、相关标的
+  → 去重 → 存储 Alert → 独立飞书 Webhook 推送
+```
+
 ### 项目结构
 
 ```
@@ -89,7 +135,7 @@ intel_sys/
 ├── app/
 │   ├── main.py              # FastAPI 入口、lifespan、execute_rule
 │   ├── config.py            # Pydantic Settings（.env 配置）
-│   ├── models.py            # Event, Alert, AIEnrichment, Severity, RuleConfig
+│   ├── models.py            # Event, Alert, MemoryEvent, AIEnrichment, Severity, RuleConfig
 │   ├── engine/
 │   │   ├── registry.py      # RuleRegistry 单例 + @register 装饰器
 │   │   ├── context.py       # RuleContext (data, ai, db, config, delivery, logger)
@@ -99,16 +145,26 @@ intel_sys/
 │   │   ├── polymarket.py    # Gamma API + CLOB API (fetch_wide / fetch_selected / fetch)
 │   │   ├── github.py        # GitHub Search API + gtrending + README 抓取
 │   │   ├── hackernews.py    # HN Algolia API (front_page / rising / search)
+│   │   ├── cls_news.py      # 财联社电报列表 API
+│   │   ├── xueqiu.py        # 雪球 7x24 快讯 API
+│   │   ├── reddit.py        # Reddit OAuth2 API
 │   │   └── twitter.py       # twitterapi.io (佐证用，非独立信源)
 │   ├── rules/
 │   │   ├── polymarket_rules.py   # 两层漏斗 (Tier1 广域 + Tier2 深度)
+│   │   ├── polymarket_digest.py  # 6 小时 Digest 聚合推送
 │   │   ├── github_rules.py       # 新项目发现 + 返回项目更新
-│   │   └── hackernews_rules.py   # HN 热门话题发现
+│   │   ├── hackernews_rules.py   # HN 热门话题发现
+│   │   ├── cls_ingest_rules.py   # 财联社电报采集 → 记忆池
+│   │   ├── xueqiu_ingest_rules.py # 雪球快讯采集 → 记忆池
+│   │   ├── reddit_ingest_rules.py # Reddit 热帖采集 → 记忆池
+│   │   └── correlation_rules.py  # 跨事件关联推理
 │   ├── ai/
 │   │   └── client.py        # OpenRouter 客户端 + Jinja2 模板渲染
+│   ├── memory/
+│   │   └── pool.py          # EventMemoryPool (Redis Sorted Set + LLM 压缩)
 │   ├── delivery/
-│   │   ├── base.py          # BaseDelivery 抽象基类
-│   │   └── feishu.py        # FeishuWebhookDelivery + NoopDelivery
+│   │   ├── base.py          # BaseDelivery 抽象基类 (send + send_batch + close)
+│   │   └── feishu.py        # FeishuWebhookDelivery + Digest 聚合卡片 + NoopDelivery
 │   ├── corroboration/
 │   │   ├── service.py       # CorroborationService (HN + Twitter 交叉验证)
 │   │   └── query_builder.py # 告警 → 搜索查询转换
@@ -121,10 +177,15 @@ intel_sys/
 │   ├── github/
 │   │   ├── project_evaluation.jinja2    # 新项目评估
 │   │   └── project_update.jinja2        # 项目更新分析
-│   └── hackernews/
-│       └── topic_analysis.jinja2        # 话题分析
+│   ├── hackernews/
+│   │   └── topic_analysis.jinja2        # 话题分析
+│   ├── memory/
+│   │   └── event_compress.jinja2        # 事件批量压缩
+│   └── correlation/
+│       └── cross_event_reasoning.jinja2 # 跨事件关联推理
 ├── static/
 │   └── index.html           # Dashboard 页面
+├── start.sh                 # 启动脚本
 ├── pyproject.toml
 ├── .env.example
 └── CLAUDE.md
@@ -177,9 +238,18 @@ GITHUB_TOKEN=ghp_xxxxxxxxxxxx
 FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxx
 FEISHU_WEBHOOK_SECRET=                # 签名密钥，未开启签名校验可留空
 
+# ===== 关联推理独立 Webhook（可选）=====
+FEISHU_INSIGHT_WEBHOOK_URL=           # 关联洞察推送到独立飞书群
+FEISHU_INSIGHT_WEBHOOK_SECRET=
+
 # ===== Social Media 佐证（可选）=====
 SM_CORROBORATION_ENABLED=true
 SM_TWITTER_API_KEY=                   # twitterapi.io Key，为空则仅用 HN 佐证
+
+# ===== 财联社 / 雪球 / Reddit（可选，记忆池数据源）=====
+XUEQIU_COOKIE=                        # 浏览器登录后复制 Cookie
+REDDIT_CLIENT_ID=                      # Reddit OAuth2 应用凭证
+REDDIT_CLIENT_SECRET=
 
 # ===== 可选调优 =====
 OPENROUTER_MODEL=google/gemini-3-flash-preview
@@ -187,6 +257,8 @@ PM_WIDE_BREAKING_THRESHOLD=0.3        # Tier 1 筛选阈值（越低覆盖越广
 PM_WIDE_MAX_TIER2=50                  # Tier 2 最大候选数
 PM_VOLUME_SPIKE_RATIO=3.0             # Tier 2 成交量突增阈值
 ALERT_MAX_PER_SOURCE=100
+CORRELATION_INTERVAL=1800             # 关联推理间隔（秒）
+CORRELATION_MIN_EVENTS=10             # 最少事件数，低于此跳过推理
 ```
 
 完整配置说明参见 `.env.example`。
@@ -210,11 +282,14 @@ redis-cli ping   # => PONG
 ### 4. 启动服务
 
 ```bash
-# 开发模式（代码变更自动重载）
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+# 使用启动脚本
+./start.sh
+
+# 或手动启动（开发模式）
+uvicorn app.main:app --reload --host 0.0.0.0 --port 7777
 
 # 生产模式
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
+uvicorn app.main:app --host 0.0.0.0 --port 7777 --workers 1
 ```
 
 正常启动日志：
@@ -223,10 +298,15 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
 INFO app.main: Starting Intel System...
 INFO app.main: Redis connected: redis://localhost:6379/0
 INFO app.main: Feishu delivery enabled          # 或 "disabled (no webhook URL)"
-INFO app.main: Loaded 3 rules
+INFO app.main: Loaded 8 rules
 INFO app.engine.scheduler: Scheduled rule detect_polymarket_anomalies: interval:90s
+INFO app.engine.scheduler: Scheduled rule send_polymarket_digest: cron:0 */6 * * *
 INFO app.engine.scheduler: Scheduled rule discover_trending_repos: cron:0 9 * * *
 INFO app.engine.scheduler: Scheduled rule discover_hn_hot_topics: interval:7200s
+INFO app.engine.scheduler: Scheduled rule ingest_cls_news: interval:120s
+INFO app.engine.scheduler: Scheduled rule ingest_xueqiu_news: interval:300s
+INFO app.engine.scheduler: Scheduled rule ingest_reddit_posts: interval:1800s
+INFO app.engine.scheduler: Scheduled rule discover_cross_event_insights: interval:1800s
 ```
 
 ### 5. 配置飞书机器人（可选）
@@ -235,7 +315,8 @@ INFO app.engine.scheduler: Scheduled rule discover_hn_hot_topics: interval:7200s
 2. 选择 **「自定义机器人」**，设置名称后点击添加
 3. 复制 Webhook 地址，填入 `.env` 的 `FEISHU_WEBHOOK_URL`
 4. （可选）在安全设置中开启「签名校验」，将密钥填入 `FEISHU_WEBHOOK_SECRET`
-5. 重启服务，日志显示 `Feishu delivery enabled` 即配置成功
+5. （可选）为关联推理洞察创建独立飞书群和机器人，填入 `FEISHU_INSIGHT_WEBHOOK_URL`
+6. 重启服务，日志显示 `Feishu delivery enabled` 即配置成功
 
 ---
 
@@ -245,113 +326,144 @@ INFO app.engine.scheduler: Scheduled rule discover_hn_hot_topics: interval:7200s
 
 ```bash
 # 各信源告警
-curl http://localhost:8000/alerts/polymarket
-curl http://localhost:8000/alerts/github
-curl http://localhost:8000/alerts/hackernews
+curl http://localhost:7777/alerts/polymarket
+curl http://localhost:7777/alerts/github
+curl http://localhost:7777/alerts/hackernews
+curl http://localhost:7777/alerts/correlation
 
 # 带分页
-curl "http://localhost:8000/alerts/polymarket?limit=10&offset=0"
+curl "http://localhost:7777/alerts/polymarket?limit=10&offset=0"
 
 # 按 ID 获取单条告警
-curl http://localhost:8000/alerts/github/{alert_id}
+curl http://localhost:7777/alerts/github/{alert_id}
 ```
 
 ### 调试端点
 
 ```bash
 # 查看已注册规则
-curl http://localhost:8000/debug/rules
+curl http://localhost:7777/debug/rules
 
 # 查看最近告警
-curl http://localhost:8000/debug/events/polymarket
+curl http://localhost:7777/debug/events/polymarket
 
 # 查询 Redis key
-curl http://localhost:8000/debug/state/pm:market:{id}:baseline
+curl http://localhost:7777/debug/state/pm:market:{id}:baseline
 
 # 查看调度任务
-curl http://localhost:8000/debug/scheduler
+curl http://localhost:7777/debug/scheduler
 ```
 
 ### 手动触发
 
 ```bash
 # 触发单条规则
-curl -X POST http://localhost:8000/debug/trigger/detect_polymarket_anomalies
-curl -X POST http://localhost:8000/debug/trigger/discover_trending_repos
-curl -X POST http://localhost:8000/debug/trigger/discover_hn_hot_topics
+curl -X POST http://localhost:7777/debug/trigger/detect_polymarket_anomalies
+curl -X POST http://localhost:7777/debug/trigger/discover_trending_repos
+curl -X POST http://localhost:7777/debug/trigger/discover_hn_hot_topics
+curl -X POST http://localhost:7777/debug/trigger/discover_cross_event_insights
 
 # 触发某信源下所有规则
-curl -X POST http://localhost:8000/debug/trigger-source/polymarket
+curl -X POST http://localhost:7777/debug/trigger-source/polymarket
 ```
 
 ### 调度控制
 
 ```bash
 # 暂停/恢复单条规则
-curl -X POST http://localhost:8000/debug/scheduler/pause/detect_polymarket_anomalies
-curl -X POST http://localhost:8000/debug/scheduler/resume/detect_polymarket_anomalies
+curl -X POST http://localhost:7777/debug/scheduler/pause/detect_polymarket_anomalies
+curl -X POST http://localhost:7777/debug/scheduler/resume/detect_polymarket_anomalies
 
 # 暂停/恢复某信源下所有规则
-curl -X POST http://localhost:8000/debug/scheduler/pause-source/polymarket
-curl -X POST http://localhost:8000/debug/scheduler/resume-source/polymarket
+curl -X POST http://localhost:7777/debug/scheduler/pause-source/polymarket
+curl -X POST http://localhost:7777/debug/scheduler/resume-source/polymarket
 ```
 
 ### 系统管理
 
 ```bash
 # 重载规则（无需重启服务）
-curl -X POST http://localhost:8000/system/reload
+curl -X POST http://localhost:7777/system/reload
 ```
 
 ---
 
-## Polymarket 两层漏斗架构
+## 核心功能详解
 
-### 设计动机
+### Polymarket 两层漏斗架构
+
+#### 设计动机
 
 原方案仅监控 Top 25 市场（按 24h volume 排序），覆盖率 ~1.8%（25 / 1,389 有效市场）。Gamma API 已返回丰富字段（`volume24hr`、`volume1wk`、`oneDayPriceChange`、`oneHourPriceChange`、`spread` 等），可以零 CLOB 调用筛选全部 ~6,800 个有效市场，仅对真正异动的少量市场发起 CLOB 深度分析。
 
-### 架构
+#### 架构
 
 ```
 Tier 1: 广域扫描 (1 次 Gamma API 调用, ~6800 市场, 零 CLOB)
   ↓ 轻量信号筛选:
-  │   Volume Spike (24h/日均) ≥ 2x
-  │   Price Velocity 1d ≥ 5%
-  │   Price Velocity 1h ≥ 3%
-  │   Spread Anomaly ≥ 0.10
-  ↓ 复合 breaking_score ≥ 0.3
+  │   Volume Spike (24h/日均) >= 2x
+  │   Price Velocity 1d >= 5%
+  │   Price Velocity 1h >= 3%
+  │   Spread Anomaly >= 0.10
+  ↓ 复合 breaking_score >= 0.3
   ↓ 约 20-30 个候选 (上限 50)
 Tier 2: 深度分析 (CLOB orderbook + Redis 基线 + AI)
   ↓ ~60-120 次 CLOB 调用 (在 100 req/min 限速内)
-  ↓ 告警 + HN 佐证 + 飞书推送
+  ↓ 告警缓冲 → 6 小时 Digest 聚合推送
 ```
 
-### Breaking Score 计算
+#### Breaking Score 计算
 
 ```
-breaking_score = vol_component × 0.4 + price_component × 0.3 + spread_component × 0.3
+breaking_score = vol_component * 0.4 + price_component * 0.3 + spread_component * 0.3
 ```
 
-- `vol_component` = min(volume_ratio / 10, 1.0)，当 volume_ratio ≥ 2.0 时触发
+- `vol_component` = min(volume_ratio / 10, 1.0)，当 volume_ratio >= 2.0 时触发
 - `price_component` = max(1d 分量, 1h 分量)
-- `spread_component` = min(spread / 0.30, 1.0)，当 spread ≥ 0.10 时触发
+- `spread_component` = min(spread / 0.30, 1.0)，当 spread >= 0.10 时触发
 
-### Tier 2 信号（依赖 Redis 历史）
+#### Tier 2 信号（依赖 Redis 历史）
 
 | 信号 | 算法 | 阈值 | 冷启动 |
 |------|------|------|--------|
-| 成交量突增 | `volume_24h / EMA基线` | ≥ 3x | 首次仅写入基线 |
-| Orderbook 失衡 | `bid_size / (bid+ask)` 前 10 档 | ≥ 0.7 或 ≤ 0.3 | 首次即可触发 |
-| 价格速度 | `|当前 - 上次| / 上次 × 100` | ≥ 5% | 首次仅写入快照 |
+| 成交量突增 | `volume_24h / EMA基线` | >= 3x | 首次仅写入基线 |
+| Orderbook 失衡 | `bid_size / (bid+ask)` 前 10 档 | >= 0.7 或 <= 0.3 | 首次即可触发 |
+| 价格速度 | `\|当前 - 上次\| / 上次 * 100` | >= 5% | 首次仅写入快照 |
 
-### 交易建议
+#### 交易建议
 
 AI 输出包含具体买入项和价格：
 - `direction`: buy_yes / buy_no / hold / avoid
 - `outcome`: 具体选项名称（如 "Yes" 或 "No"）
 - `price`: 该选项当前价格
 - 飞书卡片显示：**买入 Yes @ $0.3200（若胜出回报 3.1x）**
+
+### 事件记忆池与关联推理
+
+#### 事件记忆池 (Event Memory Pool)
+
+多个「采集型」信源（财联社、雪球、Reddit）定期将事件写入 Redis Sorted Set，作为关联推理的数据基础。
+
+- **存储结构**: Redis Sorted Set，score = Unix 时间戳，支持高效时间范围查询
+- **LLM 压缩**: 原始事件经 LLM 批量压缩为 `MemoryEvent`（摘要 + 分类 + 实体 + 情感倾向）
+- **去重**: 基于 `source:source_id` 的 Redis key 去重，TTL = 记忆池保留天数
+- **自动清理**: 超过 TTL（默认 7 天）的事件自动移除
+- **降级机制**: LLM 压缩失败时，使用原始标题作为摘要存储
+
+#### 关联推理引擎 (Correlation Engine)
+
+每 30 分钟从记忆池读取近 7 天事件，通过 LLM 发现跨事件关联和投资洞察。
+
+输出结构化洞察包含：
+- **事件链 (chain)**: 关联事件的因果序列
+- **投资方向 (investment_direction)**: 具体投资建议
+- **相关标的 (related_assets)**: 受影响的资产及预期方向
+- **周期阶段 (cycle_phase)**: 孕育期/共识期/狂热期/否认期/投降期/复苏期
+- **拥挤度 (crowdedness)**: 该方向的市场拥挤程度
+- **边际信号 (marginal_signals)**: 今日正向/负向边际变化
+- **催化剂 (next_catalyst)**: 下一个可能触发事件及日期
+
+关联洞察通过独立飞书 Webhook 推送（与日常告警分开），卡片包含投资方向、相关标的、风险提示等折叠面板。
 
 ---
 
@@ -366,7 +478,7 @@ from app.engine.registry import rule_registry
 from app.engine.context import RuleContext
 
 @rule_registry.register(
-    source="github",             # "github" / "polymarket" / "hackernews"
+    source="github",             # "github" / "polymarket" / "hackernews" / "cls" / "xueqiu" / "reddit" / "correlation"
     schedule="cron:0 */6 * * *", # 每 6 小时执行一次
     trigger="batch",             # "batch" (批量处理) 或 "threshold" (阈值触发)
 )
@@ -404,6 +516,21 @@ async def my_custom_rule(ctx: RuleContext) -> bool:
 
 ---
 
+## 已注册规则一览
+
+| 规则 | 信源 | 调度 | 说明 |
+|------|------|------|------|
+| `detect_polymarket_anomalies` | polymarket | `interval:90s` | 两层漏斗异常检测，告警写入缓冲区 |
+| `send_polymarket_digest` | polymarket | `cron:0 */6 * * *` | 6 小时 Digest 聚合推送 |
+| `discover_trending_repos` | github | `cron:0 9 * * *` | GitHub Trending 项目发现 + 更新检测 |
+| `discover_hn_hot_topics` | hackernews | `interval:7200s` | HN 热门话题发现 |
+| `ingest_cls_news` | cls | `interval:120s` | 财联社电报采集 → 记忆池 |
+| `ingest_xueqiu_news` | xueqiu | `interval:300s` | 雪球快讯采集 → 记忆池 |
+| `ingest_reddit_posts` | reddit | `interval:1800s` | Reddit 热帖采集 → 记忆池 |
+| `discover_cross_event_insights` | correlation | `interval:1800s` | 跨事件关联推理 |
+
+---
+
 ## Redis Key 一览
 
 | Key 格式 | 类型 | TTL | 用途 |
@@ -414,7 +541,11 @@ async def my_custom_rule(ctx: RuleContext) -> bool:
 | `pm:market:{id}:baseline` | JSON | 7 天 | 成交量 EMA 基线 |
 | `pm:market:{id}:last_price` | String | 1 小时 | 价格快照，用于 velocity 计算 |
 | `pm:alert:{id}:sent` | String | 24 小时 | Polymarket 告警去重 |
+| `pm:alerts:hourly_buffer` | List | 无 | Polymarket 6 小时 Digest 缓冲区 |
 | `hn:story:{id}:pushed` | String | 7 天 | HackerNews 去重 |
+| `memory:events` | Sorted Set | 7 天 | 事件记忆池（score = Unix 时间戳） |
+| `memory:dedup:{source}:{id}` | String | 7 天 | 记忆池事件去重 |
+| `correlation:insight:{hash}` | String | 24 小时 | 关联洞察去重 |
 
 ---
 
@@ -430,8 +561,11 @@ async def my_custom_rule(ctx: RuleContext) -> bool:
 | Polymarket | httpx | Gamma API + CLOB API |
 | GitHub | httpx + gtrending | Search API + Trending fallback |
 | Hacker News | httpx | Algolia Search API |
+| 财联社 | httpx | 电报列表 API |
+| 雪球 | httpx | 7x24 快讯 API（Cookie 认证） |
+| Reddit | httpx | OAuth2 API |
 | Twitter 佐证 | httpx | twitterapi.io (按量付费) |
-| 飞书推送 | httpx | 自定义机器人 Webhook (Card JSON v2)，无需 SDK |
+| 飞书推送 | httpx | 自定义机器人 Webhook (Card JSON v2 + Digest)，无需 SDK |
 | 配置管理 | Pydantic Settings | `.env` + 环境变量 |
 | 构建系统 | Hatch | pyproject.toml 声明式配置 |
 
@@ -447,14 +581,20 @@ async def my_custom_rule(ctx: RuleContext) -> bool:
 - [x] 信源: GitHub (Search API + gtrending + README 抓取)
 - [x] 信源: Hacker News (Algolia API — front_page + rising)
 - [x] 信源: Twitter (twitterapi.io — 佐证用)
+- [x] 信源: 财联社电报 (记忆池数据源)
+- [x] 信源: 雪球 7x24 快讯 (记忆池数据源)
+- [x] 信源: Reddit (记忆池数据源)
 - [x] 规则: Polymarket 两层漏斗 — 全量 ~6800 市场广域扫描 + CLOB 深度分析
+- [x] 规则: Polymarket 6 小时 Digest 聚合推送
 - [x] 规则: GitHub Trending 项目发现 (star-delta + gtrending) + 返回项目更新检测
 - [x] 规则: Hacker News 热门话题发现
+- [x] 事件记忆池: Redis Sorted Set + LLM 批量压缩 + 自动清理
+- [x] 关联推理引擎: 跨事件 LLM 推理 + 投资洞察 + 独立 Webhook 推送
 - [x] AI 管线: OpenRouter + Jinja2 模板 + JSON 解析
 - [x] Polymarket AI 增强: 中文翻译、具体交易建议(买入项+价格+回报率)、地缘影响
 - [x] Social Media 佐证: HN + Twitter 交叉验证，置信度增减
 - [x] 告警 REST API + 调试端点 + 调度控制
-- [x] 飞书 Webhook 机器人推送 (Card JSON v2 + collapsible_panel，v1 fallback)
+- [x] 飞书 Webhook 机器人推送 (Card JSON v2 + Digest 聚合卡片 + collapsible_panel，v1 fallback)
 - [x] Dashboard 页面
 - [ ] 集成测试
 
@@ -484,7 +624,7 @@ async def my_custom_rule(ctx: RuleContext) -> bool:
 
 ---
 
-## ⚠️ 免责声明
+## 免责声明
 
 本项目仅供学习和研究使用，不构成任何投资建议。股市有风险，投资需谨慎。作者不对使用本项目产生的任何损失负责。
 
