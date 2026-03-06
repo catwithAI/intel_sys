@@ -579,6 +579,165 @@ class FeishuWebhookDelivery(BaseDelivery):
         return [_md(alert.enrichment.summary or alert.title)]
 
     # ------------------------------------------------------------------
+    # Polymarket digest card (batch)
+    # ------------------------------------------------------------------
+    def _format_pm_digest_card(self, alerts: list[Alert]) -> dict[str, Any]:
+        """Aggregate multiple Polymarket alerts into a single digest card."""
+        header_text = f"Polymarket 异动汇总 ({len(alerts)} 条 · 过去 6 小时)"
+
+        # Header color from highest severity
+        severity_order = [Severity.LOW, Severity.MEDIUM, Severity.HIGH, Severity.CRITICAL]
+        best_idx = 0
+        for a in alerts:
+            try:
+                idx = severity_order.index(a.severity)
+            except ValueError:
+                idx = 0
+            if idx > best_idx:
+                best_idx = idx
+        color = _SEVERITY_COLORS.get(severity_order[best_idx], "blue")
+
+        elements: list[dict] = []
+
+        for alert in alerts:
+            # Build inner content reusing existing polymarket card logic
+            inner_elements = self._format_polymarket_card(alert)
+
+            # Append corroboration if available
+            corr_panel = self._format_corroboration_panel(alert.corroboration)
+            if corr_panel:
+                inner_elements.append(corr_panel)
+
+            # Collapse title: question_zh (severity)
+            ai_data: dict = {}
+            if alert.enrichment.analysis:
+                try:
+                    ai_data = json.loads(alert.enrichment.analysis)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            question_zh = ai_data.get("question_zh", "")
+            collapse_title = question_zh or alert.event.data.get("question", "")[:60]
+            collapse_title = f"{collapse_title} ({alert.severity.value})"
+
+            elements.append(_collapsible(collapse_title, inner_elements))
+
+        return {
+            "msg_type": "interactive",
+            "card": {
+                "schema": "2.0",
+                "header": {
+                    "title": {"tag": "plain_text", "content": header_text},
+                    "template": color,
+                },
+                "body": {
+                    "elements": elements,
+                },
+            },
+        }
+
+    # ------------------------------------------------------------------
+    # HackerNews digest card (batch)
+    # ------------------------------------------------------------------
+    def _format_hn_digest_card(self, alerts: list[Alert]) -> dict[str, Any]:
+        """Aggregate multiple HackerNews alerts into a single digest card."""
+        header_text = f"HackerNews 热门话题 ({len(alerts)} 篇)"
+
+        # Header color from highest severity
+        severity_order = [Severity.LOW, Severity.MEDIUM, Severity.HIGH, Severity.CRITICAL]
+        best_idx = 0
+        for a in alerts:
+            try:
+                idx = severity_order.index(a.severity)
+            except ValueError:
+                idx = 0
+            if idx > best_idx:
+                best_idx = idx
+        color = _SEVERITY_COLORS.get(severity_order[best_idx], "blue")
+
+        elements: list[dict] = []
+
+        for alert in alerts:
+            event = alert.event
+            data = event.data
+            points = data.get("points", 0)
+            url = data.get("url", "")
+            hn_url = data.get("hn_url", "")
+
+            # Parse AI analysis JSON
+            ai_data: dict = {}
+            if alert.enrichment.analysis:
+                try:
+                    ai_data = json.loads(alert.enrichment.analysis)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            summary = ai_data.get("summary", alert.enrichment.summary or "")
+            category = ai_data.get("category", "")
+            _category_map = {
+                "ai": "AI", "infrastructure": "基础设施", "security": "安全",
+                "programming": "编程", "startup": "创业", "open_source": "开源",
+                "industry_news": "行业资讯", "science": "科学", "other": "其他",
+            }
+            category_label = _category_map.get(category, category)
+
+            # Title + summary (always visible)
+            title_text = data.get("title", "")
+            visible_lines = [f"**[{category_label}] {title_text}** ({points}↑)"]
+            if summary:
+                visible_lines.append(summary)
+            links = []
+            if url:
+                links.append(f"[原文链接]({url})")
+            if hn_url:
+                links.append(f"[HN 讨论]({hn_url})")
+            if links:
+                visible_lines.append(" | ".join(links))
+
+            elements.append(_md("\n".join(visible_lines)))
+
+            # Details (collapsed) — reuse full card logic
+            detail_elements = []
+            num_comments = data.get("num_comments", 0)
+            author = data.get("author", "")
+            topics = ai_data.get("topics", [])
+            key_insights = ai_data.get("key_insights", [])
+            impact_assessment = ai_data.get("impact_assessment", "")
+
+            detail_lines = [f"得分: {points} | 评论: {num_comments} | 作者: {author}"]
+            if topics:
+                detail_lines.append(f"标签: {', '.join(topics)}")
+            if key_insights:
+                detail_lines.append("\n**社区洞察**")
+                for ins in key_insights:
+                    detail_lines.append(f"- {ins}")
+            if impact_assessment:
+                detail_lines.append(f"\n**影响评估**\n{impact_assessment}")
+
+            # Corroboration
+            corr_panel = self._format_corroboration_panel(alert.corroboration)
+
+            inner = [_md("\n".join(detail_lines))]
+            if corr_panel:
+                inner.append(corr_panel)
+
+            elements.append(_collapsible("详细信息", inner))
+
+        return {
+            "msg_type": "interactive",
+            "card": {
+                "schema": "2.0",
+                "header": {
+                    "title": {"tag": "plain_text", "content": header_text},
+                    "template": color,
+                },
+                "body": {
+                    "elements": elements,
+                },
+            },
+        }
+
+    # ------------------------------------------------------------------
     # GitHub digest card (batch)
     # ------------------------------------------------------------------
     def _format_github_digest_card(self, alerts: list[Alert]) -> dict[str, Any]:
@@ -712,45 +871,56 @@ class FeishuWebhookDelivery(BaseDelivery):
     # ------------------------------------------------------------------
     # Send
     # ------------------------------------------------------------------
-    async def send_batch(self, alerts: list[Alert]) -> bool:
-        """Send multiple alerts as a single message.
+    async def _send_digest(self, payload: dict[str, Any], label: str = "digest") -> bool:
+        """Send a pre-formatted digest card payload."""
+        if self._secret:
+            ts = int(time.time())
+            payload["timestamp"] = str(ts)
+            payload["sign"] = self._gen_sign(ts)
 
-        GitHub alerts are aggregated into one digest card.
-        Other source alerts fall back to individual sends.
+        try:
+            resp = await self._http.post(self._webhook_url, json=payload)
+            data = resp.json()
+            if data.get("code") == 0:
+                logger.info("Feishu %s sent", label)
+                return True
+            logger.warning("Feishu %s error: %s", label, data)
+            return False
+        except Exception:
+            logger.exception("Failed to send Feishu %s", label)
+            return False
+
+    async def send_batch(self, alerts: list[Alert]) -> bool:
+        """Send multiple alerts as digest cards grouped by source.
+
+        GitHub / Polymarket / HackerNews alerts are each aggregated into
+        a single digest card. Other source alerts fall back to individual sends.
         """
         if not alerts:
             return False
 
         github_alerts = [a for a in alerts if a.source == SourceType.GITHUB]
-        other_alerts = [a for a in alerts if a.source != SourceType.GITHUB]
+        pm_alerts = [a for a in alerts if a.source == SourceType.POLYMARKET]
+        hn_alerts = [a for a in alerts if a.source == SourceType.HACKERNEWS]
+        other_alerts = [
+            a for a in alerts
+            if a.source not in (SourceType.GITHUB, SourceType.POLYMARKET, SourceType.HACKERNEWS)
+        ]
 
         results: list[bool] = []
 
-        # Send GitHub digest as one card
         if github_alerts:
             payload = self._format_github_digest_card(github_alerts)
+            results.append(await self._send_digest(payload, f"GitHub digest ({len(github_alerts)} alerts)"))
 
-            if self._secret:
-                ts = int(time.time())
-                payload["timestamp"] = str(ts)
-                payload["sign"] = self._gen_sign(ts)
+        if pm_alerts:
+            payload = self._format_pm_digest_card(pm_alerts)
+            results.append(await self._send_digest(payload, f"Polymarket digest ({len(pm_alerts)} alerts)"))
 
-            try:
-                resp = await self._http.post(self._webhook_url, json=payload)
-                data = resp.json()
-                if data.get("code") == 0:
-                    logger.info(
-                        "Feishu GitHub digest sent: %d alerts", len(github_alerts)
-                    )
-                    results.append(True)
-                else:
-                    logger.warning("Feishu GitHub digest error: %s", data)
-                    results.append(False)
-            except Exception:
-                logger.exception("Failed to send GitHub digest (%d alerts)", len(github_alerts))
-                results.append(False)
+        if hn_alerts:
+            payload = self._format_hn_digest_card(hn_alerts)
+            results.append(await self._send_digest(payload, f"HN digest ({len(hn_alerts)} alerts)"))
 
-        # Other sources: send individually
         for a in other_alerts:
             results.append(await self.send(a))
 

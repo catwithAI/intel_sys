@@ -70,6 +70,7 @@ async def discover_hn_hot_topics(ctx: RuleContext) -> bool:
     )
 
     alerts_created = 0
+    all_alerts: list[Alert] = []
 
     for event in top:
         object_id = event.source_id
@@ -147,10 +148,14 @@ async def discover_hn_hot_topics(ctx: RuleContext) -> bool:
         # Set dedup key (7-day TTL)
         await ctx.db.set(f"hn:story:{object_id}:pushed", "1", ex=7 * 86400)
 
-        await ctx.delivery.send(alert)
+        all_alerts.append(alert)
 
         alerts_created += 1
         logger.info("HN alert: %s (%d points)", data.get("title", "")[:60], points)
+
+    # Send all alerts as a single digest card
+    if all_alerts:
+        await ctx.delivery.send_batch(all_alerts)
 
     await source.stop()
 

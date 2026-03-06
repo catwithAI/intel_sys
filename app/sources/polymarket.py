@@ -182,47 +182,59 @@ class PolymarketSource(BaseSource):
             return None
 
     async def _refresh_markets(self) -> None:
-        """Get list of active markets from Gamma API, filtered and sorted by volume."""
+        """Get list of active markets from Gamma API, filtered and sorted by volume.
+
+        Uses the /markets endpoint directly (instead of /events) so that
+        sub-markets belonging to event-level ``closed=True`` parents are still
+        discovered.  The endpoint is queried with ``order=volume24hr`` so
+        the most active markets come first.
+        """
         try:
             resp = await self._http.get(
-                f"{GAMMA_API}/events",
-                params={"active": "true", "closed": "false", "limit": settings.pm_gamma_limit},
+                f"{GAMMA_API}/markets",
+                params={
+                    "active": "true",
+                    "closed": "false",
+                    "limit": settings.pm_gamma_limit,
+                    "order": "volume24hr",
+                    "ascending": "false",
+                },
             )
             resp.raise_for_status()
             data = resp.json()
-            # Gamma returns events, each containing markets
+
             markets = []
-            for event in data:
-                for market in event.get("markets", []):
-                    market["_event_title"] = event.get("title", "")
-                    market["_event_slug"] = event.get("slug", "")
-                    for field in ("clobTokenIds", "outcomes", "outcomePrices"):
-                        val = market.get(field)
-                        if isinstance(val, str):
-                            try:
-                                market[field] = json.loads(val)
-                            except (json.JSONDecodeError, TypeError):
-                                pass
+            for market in data:
+                # Extract parent event info from nested events list
+                parent_events = market.get("events", [])
+                if parent_events:
+                    market["_event_title"] = parent_events[0].get("title", "")
+                    market["_event_slug"] = parent_events[0].get("slug", "")
+                else:
+                    market["_event_title"] = ""
+                    market["_event_slug"] = ""
 
-                    # Pre-filter: skip closed, not accepting orders, or no CLOB tokens
-                    if market.get("closed") is True:
-                        continue
-                    if market.get("acceptingOrders") is False:
-                        continue
-                    if not market.get("clobTokenIds"):
-                        continue
+                for field in ("clobTokenIds", "outcomes", "outcomePrices"):
+                    val = market.get(field)
+                    if isinstance(val, str):
+                        try:
+                            market[field] = json.loads(val)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
 
-                    markets.append(market)
+                # Pre-filter: skip not accepting orders or no CLOB tokens
+                if market.get("acceptingOrders") is False:
+                    continue
+                if not market.get("clobTokenIds"):
+                    continue
 
-            # Sort by 24h volume descending
-            markets.sort(
-                key=lambda m: float(m.get("volume24hr", 0) or 0), reverse=True
-            )
+                markets.append(market)
+
             self._active_markets = markets
 
             top_vol = float(markets[0].get("volume24hr", 0)) if markets else 0
             logger.info(
-                "Refreshed %d active markets (sorted by volume24hr, top: $%s)",
+                "Refreshed %d active markets from /markets endpoint (top: $%s)",
                 len(markets),
                 f"{top_vol:,.0f}",
             )
