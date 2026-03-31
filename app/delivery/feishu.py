@@ -518,6 +518,89 @@ class FeishuWebhookDelivery(BaseDelivery):
 
         return elements
 
+    def _format_correlation_digest_card(self, alerts: list[Alert]) -> dict[str, Any]:
+        """Aggregate multiple correlation insights into a single digest card."""
+        color = "orange"
+        count = len(alerts)
+        header_text = f"关联推理洞察 Digest ({count} 条)"
+
+        sorted_alerts = sorted(
+            alerts,
+            key=lambda a: a.enrichment.confidence,
+            reverse=True,
+        )
+
+        elements: list[dict] = []
+        summary_lines = [
+            f"本次推送共 {count} 条去重后的关联推理洞察。",
+            "已按置信度排序，并在推送前对重复投资方向做了合并。",
+        ]
+        elements.append(_md("\n".join(summary_lines)))
+
+        for alert in sorted_alerts:
+            data = alert.event.data
+            direction = data.get("investment_direction", "")
+            merged_count = int(data.get("merged_count", 1) or 1)
+            merged_titles = data.get("merged_titles", []) or []
+            chain = data.get("chain", []) or []
+            related_assets = data.get("related_assets", []) or []
+
+            panel_lines = []
+            if direction:
+                panel_lines.append(f"**投资方向**: {direction}")
+            if alert.enrichment.summary:
+                panel_lines.append(alert.enrichment.summary)
+            panel_lines.append(f"置信度: {alert.enrichment.confidence:.2f}")
+
+            if merged_count > 1 and merged_titles:
+                panel_lines.append("\n**合并主题**")
+                for title in merged_titles[:5]:
+                    panel_lines.append(f"- {title}")
+                if len(merged_titles) > 5:
+                    panel_lines.append(f"- 另有 {len(merged_titles) - 5} 条相似洞察")
+
+            if chain:
+                panel_lines.append("\n**事件链**")
+                for idx, item in enumerate(chain[:5], 1):
+                    panel_lines.append(f"{idx}. {item}")
+
+            if related_assets:
+                asset_parts = []
+                for asset in related_assets[:5]:
+                    if not isinstance(asset, dict):
+                        continue
+                    symbol = asset.get("symbol", "")
+                    move = asset.get("expected_direction", "")
+                    rationale = asset.get("rationale", "")
+                    part = f"**{symbol}**"
+                    if move:
+                        part += f" {move}"
+                    if rationale:
+                        part += f" {rationale}"
+                    asset_parts.append(part)
+                if asset_parts:
+                    panel_lines.append("\n**相关标的**")
+                    panel_lines.append(" | ".join(asset_parts))
+
+            collapse_title = alert.title
+            if merged_count > 1:
+                collapse_title += f"（合并 {merged_count} 条）"
+            elements.append(_collapsible(collapse_title, [_md("\n".join(panel_lines))]))
+
+        return {
+            "msg_type": "interactive",
+            "card": {
+                "schema": "2.0",
+                "header": {
+                    "title": {"tag": "plain_text", "content": header_text},
+                    "template": color,
+                },
+                "body": {
+                    "elements": elements,
+                },
+            },
+        }
+
     # ------------------------------------------------------------------
     # Corroboration panel
     # ------------------------------------------------------------------
@@ -893,7 +976,7 @@ class FeishuWebhookDelivery(BaseDelivery):
     async def send_batch(self, alerts: list[Alert]) -> bool:
         """Send multiple alerts as digest cards grouped by source.
 
-        GitHub / Polymarket / HackerNews alerts are each aggregated into
+        GitHub / Polymarket / HackerNews / Correlation alerts are each aggregated into
         a single digest card. Other source alerts fall back to individual sends.
         """
         if not alerts:
@@ -902,9 +985,15 @@ class FeishuWebhookDelivery(BaseDelivery):
         github_alerts = [a for a in alerts if a.source == SourceType.GITHUB]
         pm_alerts = [a for a in alerts if a.source == SourceType.POLYMARKET]
         hn_alerts = [a for a in alerts if a.source == SourceType.HACKERNEWS]
+        correlation_alerts = [a for a in alerts if a.source == SourceType.CORRELATION]
         other_alerts = [
             a for a in alerts
-            if a.source not in (SourceType.GITHUB, SourceType.POLYMARKET, SourceType.HACKERNEWS)
+            if a.source not in (
+                SourceType.GITHUB,
+                SourceType.POLYMARKET,
+                SourceType.HACKERNEWS,
+                SourceType.CORRELATION,
+            )
         ]
 
         results: list[bool] = []
@@ -920,6 +1009,15 @@ class FeishuWebhookDelivery(BaseDelivery):
         if hn_alerts:
             payload = self._format_hn_digest_card(hn_alerts)
             results.append(await self._send_digest(payload, f"HN digest ({len(hn_alerts)} alerts)"))
+
+        if correlation_alerts:
+            payload = self._format_correlation_digest_card(correlation_alerts)
+            results.append(
+                await self._send_digest(
+                    payload,
+                    f"Correlation digest ({len(correlation_alerts)} alerts)",
+                )
+            )
 
         for a in other_alerts:
             results.append(await self.send(a))

@@ -26,7 +26,7 @@ _CATEGORY_LABELS: dict[str, str] = {
 
 @rule_registry.register(
     source="hackernews",
-    schedule="interval:7200s",
+    schedule="cron:30 16 * * *",
     trigger="batch",
 )
 async def discover_hn_hot_topics(ctx: RuleContext) -> bool:

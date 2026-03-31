@@ -85,10 +85,10 @@ APScheduler Cron 触发
   → HN + Twitter 佐证 → 飞书推送
 ```
 
-**Hacker News 热门话题发现**（每 2 小时）：
+**Hacker News 热门话题发现**（每日 16:30）：
 
 ```
-APScheduler 间隔触发(7200s)
+APScheduler Cron 触发(30 16 * * *)
   → HN Algolia API: front_page + rising 合并
   → Redis 去重(7天窗口) → 按点数排序取 Top 15
   → 获取热门评论 → LLM 话题分析
@@ -119,13 +119,14 @@ APScheduler 间隔触发(1800s)
   → LLM 批量压缩 → 写入事件记忆池（不直接产生 Alert）
 ```
 
-**跨事件关联推理**（每 30 分钟）：
+**跨事件关联推理**（每日 15:30 聚合推送）：
 
 ```
-APScheduler 间隔触发(1800s)
+APScheduler Cron 触发(30 15 * * *)
   → 从记忆池读取近 7 天事件 → 按时间分组构建 Digest
   → LLM 跨事件关联推理 → 发现因果链、投资方向、相关标的
-  → 去重 → 存储 Alert → 独立飞书 Webhook 推送
+  → 按投资方向优先去重并合并相似洞察
+  → 存储 Alert → 独立飞书 Webhook Digest 推送
 ```
 
 ### 项目结构
@@ -302,11 +303,11 @@ INFO app.main: Loaded 8 rules
 INFO app.engine.scheduler: Scheduled rule detect_polymarket_anomalies: interval:90s
 INFO app.engine.scheduler: Scheduled rule send_polymarket_digest: cron:0 */6 * * *
 INFO app.engine.scheduler: Scheduled rule discover_trending_repos: cron:0 9 * * *
-INFO app.engine.scheduler: Scheduled rule discover_hn_hot_topics: interval:7200s
+INFO app.engine.scheduler: Scheduled rule discover_hn_hot_topics: cron:30 16 * * *
 INFO app.engine.scheduler: Scheduled rule ingest_cls_news: interval:120s
 INFO app.engine.scheduler: Scheduled rule ingest_xueqiu_news: interval:300s
 INFO app.engine.scheduler: Scheduled rule ingest_reddit_posts: interval:1800s
-INFO app.engine.scheduler: Scheduled rule discover_cross_event_insights: interval:1800s
+INFO app.engine.scheduler: Scheduled rule discover_cross_event_insights: cron:30 15 * * *
 ```
 
 ### 5. 配置飞书机器人（可选）
@@ -523,11 +524,11 @@ async def my_custom_rule(ctx: RuleContext) -> bool:
 | `detect_polymarket_anomalies` | polymarket | `interval:90s` | 两层漏斗异常检测，告警写入缓冲区 |
 | `send_polymarket_digest` | polymarket | `cron:0 */6 * * *` | 6 小时 Digest 聚合推送 |
 | `discover_trending_repos` | github | `cron:0 9 * * *` | GitHub Trending 项目发现 + 更新检测 |
-| `discover_hn_hot_topics` | hackernews | `interval:7200s` | HN 热门话题发现 |
+| `discover_hn_hot_topics` | hackernews | `cron:30 16 * * *` | HN 热门话题发现 |
 | `ingest_cls_news` | cls | `interval:120s` | 财联社电报采集 → 记忆池 |
 | `ingest_xueqiu_news` | xueqiu | `interval:300s` | 雪球快讯采集 → 记忆池 |
 | `ingest_reddit_posts` | reddit | `interval:1800s` | Reddit 热帖采集 → 记忆池 |
-| `discover_cross_event_insights` | correlation | `interval:1800s` | 跨事件关联推理 |
+| `discover_cross_event_insights` | correlation | `cron:30 15 * * *` | 跨事件关联推理 |
 
 ---
 
