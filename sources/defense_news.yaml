@@ -27,6 +27,7 @@
     name: Defense News
 
 - id: janes
+  enabled: false  # RSS feed discontinued (404)
   collector: rss
   country: GB
   language: en
@@ -97,6 +98,7 @@
     name: Air & Space Forces Magazine
 
 - id: armyrecognition
+  enabled: false  # RSS feed discontinued (404)
   collector: rss
   country: BE
   language: en
@@ -130,7 +132,7 @@
   language: en
   credibility: 0.8
   authority_tier: 1
-  url: https://www.defenseone.com/rss/
+  url: https://www.defenseone.com/rss/all/
   filters:
     title_blacklist: [sponsored, podcast]
     title_whitelist: [missile, cyber, ai, drone, nuclear, space]

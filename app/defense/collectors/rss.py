@@ -71,7 +71,9 @@ class RSSCollector:
         domain = urlparse(spec.url).netloc
         await self._limiter.wait_if_needed(domain, self._min_interval)
 
-        headers: dict[str, str] = {}
+        headers: dict[str, str] = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)",
+        }
         if spec.fetch.respect_etag and site_id in self._etag_cache:
             headers["If-None-Match"] = self._etag_cache[site_id]
         if spec.fetch.respect_last_modified and site_id in self._last_modified_cache:
