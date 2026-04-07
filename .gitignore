@@ -199,7 +199,6 @@ server/configs/models.yaml
 tmp
 server/configs/config.conf
 
-.claude/
 web-client/dist-replay/
 **/.DS_Store
 web-client/release/
