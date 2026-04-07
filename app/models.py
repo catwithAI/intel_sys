@@ -17,6 +17,7 @@ class SourceType(str, Enum):
     REDDIT = "reddit"
     XUEQIU = "xueqiu"
     CORRELATION = "correlation"
+    DEFENSE = "defense"
 
 
 class Severity(str, Enum):
