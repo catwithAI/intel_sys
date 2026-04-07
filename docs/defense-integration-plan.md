@@ -133,7 +133,7 @@ Phase 1 不追求“所有能力齐全”，只追求“真正能跑且不容易
 
 ### 3.1 Phase 1 交付目标
 
-Phase 1 实现：
+Phase 1 采用 **memory-first + selective alert** 混合模式：
 
 - RSS collector
 - YAML source registry
@@ -141,9 +141,12 @@ Phase 1 实现：
 - normalizer
 - URL/content 双层去重
 - Stage 1 硬过滤
-- Stage 2 规则打分
+- Stage 2 规则打分 + Top-K
 - 10 个种子源
-- 入记忆池，不直接发 alert
+- PostgreSQL append-only 持久化
+- Source Health 状态机（ok → cooling_down → pending_disable）
+- 所有通过 Top-K 的事件入 EventMemoryPool
+- pre_score ≥ 阈值的高分事件产出 Alert + 推送独立飞书防务 bot
 
 ### 3.2 Phase 1 明确不做
 
@@ -152,7 +155,6 @@ Phase 1 实现：
 - 不做 PDF 正文提取
 - 不做 simhash 近重复聚类
 - 不做 LLM relevance batch
-- 不做独立 defense alert 卡片
 
 ### 3.3 为什么这样收缩
 
@@ -989,7 +991,7 @@ Phase 2 新增 defense 专用压缩 prompt，例如：
 - 入记忆池
 - `return False`
 
-Phase 1 不直接发 alert。
+Phase 1 采用混合模式（memory-first + selective alert）：所有通过 Top-K 的事件入记忆池，pre_score ≥ 阈值的高分事件产出 Alert 并推送独立飞书防务 bot。
 
 ### 12.3 占位规则
 

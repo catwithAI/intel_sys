@@ -78,6 +78,8 @@ class FeishuWebhookDelivery(BaseDelivery):
             elements = self._format_hackernews_card(alert)
         elif alert.source == SourceType.CORRELATION:
             elements = self._format_correlation_card(alert)
+        elif alert.source == SourceType.DEFENSE:
+            elements = self._format_defense_card(alert)
         else:
             elements = self._format_generic_card(alert)
 
@@ -662,6 +664,92 @@ class FeishuWebhookDelivery(BaseDelivery):
         return [_md(alert.enrichment.summary or alert.title)]
 
     # ------------------------------------------------------------------
+    # Defense cards
+    # ------------------------------------------------------------------
+    def _format_defense_card(self, alert: Alert) -> list[dict]:
+        """Format a defense news alert card."""
+        event = alert.event
+        data = event.data or {}
+        meta = event.metadata or {}
+
+        title = data.get("title", "")
+        content = data.get("content", "")
+        url = data.get("canonical_url") or meta.get("canonical_url") or data.get("url", "")
+        site_name = meta.get("site_name") or data.get("site_name", "")
+        country = data.get("country") or meta.get("country", "")
+        quality = meta.get("extraction_quality") or data.get("extraction_quality")
+        pre_score = data.get("pre_score")
+
+        # Summary section (always visible): site_name + country + content + link
+        summary_lines = []
+        tag_parts = []
+        if site_name:
+            tag_parts.append(site_name)
+        if country:
+            tag_parts.append(country)
+        if tag_parts:
+            summary_lines.append(" · ".join(tag_parts))
+        if title:
+            summary_lines.append(f"**{title}**")
+        if content:
+            summary_lines.append(content[:300])
+        if url:
+            summary_lines.append(f"\n[阅读原文]({url})")
+
+        elements: list[dict] = [_md("\n".join(summary_lines))]
+
+        # Detail section (collapsed): quality, score, full content
+        detail_parts = []
+        if quality is not None:
+            detail_parts.append(f"质量: {quality:.2f}")
+        if pre_score is not None:
+            detail_parts.append(f"评分: {pre_score:.2f}")
+        if content and len(content) > 300:
+            detail_parts.append(f"\n{content}")
+        if detail_parts:
+            elements.append(_collapsible("详细信息", [_md(" | ".join(detail_parts[:2]) + ("" if len(detail_parts) <= 2 else detail_parts[2]))]))
+
+        return elements
+
+    def _format_defense_digest_card(self, alerts: list[Alert]) -> dict[str, Any]:
+        """Aggregate multiple defense alerts into a single digest card."""
+        header_text = f"防务新闻汇总 ({len(alerts)} 条)"
+
+        severity_order = [Severity.LOW, Severity.MEDIUM, Severity.HIGH, Severity.CRITICAL]
+        best_idx = 0
+        for a in alerts:
+            try:
+                idx = severity_order.index(a.severity)
+            except ValueError:
+                idx = 0
+            if idx > best_idx:
+                best_idx = idx
+        color = _SEVERITY_COLORS.get(severity_order[best_idx], "blue")
+
+        elements: list[dict] = []
+
+        for alert in alerts:
+            inner_elements = self._format_defense_card(alert)
+            event = alert.event
+            data = event.data or {}
+            collapse_title = data.get("title", alert.title)
+            elements.append(_collapsible(collapse_title, inner_elements, expanded=False))
+
+        return {
+            "msg_type": "interactive",
+            "card": {
+                "schema": "2.0",
+                "header": {
+                    "title": {"tag": "plain_text", "content": header_text},
+                    "template": color,
+                },
+                "body": {
+                    "elements": elements,
+                },
+            },
+        }
+
+    # ------------------------------------------------------------------
     # Polymarket digest card (batch)
     # ------------------------------------------------------------------
     def _format_pm_digest_card(self, alerts: list[Alert]) -> dict[str, Any]:
@@ -986,6 +1074,7 @@ class FeishuWebhookDelivery(BaseDelivery):
         pm_alerts = [a for a in alerts if a.source == SourceType.POLYMARKET]
         hn_alerts = [a for a in alerts if a.source == SourceType.HACKERNEWS]
         correlation_alerts = [a for a in alerts if a.source == SourceType.CORRELATION]
+        defense_alerts = [a for a in alerts if a.source == SourceType.DEFENSE]
         other_alerts = [
             a for a in alerts
             if a.source not in (
@@ -993,6 +1082,7 @@ class FeishuWebhookDelivery(BaseDelivery):
                 SourceType.POLYMARKET,
                 SourceType.HACKERNEWS,
                 SourceType.CORRELATION,
+                SourceType.DEFENSE,
             )
         ]
 
@@ -1016,6 +1106,15 @@ class FeishuWebhookDelivery(BaseDelivery):
                 await self._send_digest(
                     payload,
                     f"Correlation digest ({len(correlation_alerts)} alerts)",
+                )
+            )
+
+        if defense_alerts:
+            payload = self._format_defense_digest_card(defense_alerts)
+            results.append(
+                await self._send_digest(
+                    payload,
+                    f"Defense digest ({len(defense_alerts)} alerts)",
                 )
             )
 

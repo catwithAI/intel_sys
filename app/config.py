@@ -98,6 +98,28 @@ class Settings(BaseSettings):
     feishu_insight_webhook_url: str = ""
     feishu_insight_webhook_secret: str = ""
 
+    # Defense News Scraping
+    defense_rss_interval: int = 1800
+    defense_rss_concurrency: int = 5
+    defense_domain_min_interval: float = 10.0
+    defense_rss_timeout: float = 15.0
+    defense_topk: int = 200
+    defense_dedup_ttl: int = 604800
+    defense_max_entries_per_source: int = 30
+    defense_cooldown_hours: int = 6
+    defense_max_consecutive_failures: int = 3
+    defense_disable_threshold: int = 10
+    defense_alert_threshold: float = 0.3
+
+    # PostgreSQL
+    pg_dsn: str = ""
+    pg_pool_min: int = 2
+    pg_pool_max: int = 10
+
+    # Defense Feishu Webhook (独立 bot)
+    feishu_defense_webhook_url: str = ""
+    feishu_defense_webhook_secret: str = ""
+
     @classmethod
     def settings_customise_sources(cls, settings_cls, **kwargs):
         """Allow JSON strings for list fields from env vars."""
