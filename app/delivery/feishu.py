@@ -672,44 +672,28 @@ class FeishuWebhookDelivery(BaseDelivery):
         data = event.data or {}
         meta = event.metadata or {}
 
-        title = data.get("title", "")
-        content = data.get("content", "")
+        title_zh = data.get("title_zh") or data.get("title", "")
+        summary_zh = data.get("summary_zh", "")
         url = data.get("canonical_url") or meta.get("canonical_url") or data.get("url", "")
         site_name = meta.get("site_name") or data.get("site_name", "")
         country = data.get("country") or meta.get("country", "")
-        quality = meta.get("extraction_quality") or data.get("extraction_quality")
-        pre_score = data.get("pre_score")
 
-        # Summary section (always visible): site_name + country + content + link
-        summary_lines = []
+        lines = []
         tag_parts = []
         if site_name:
             tag_parts.append(site_name)
         if country:
             tag_parts.append(country)
         if tag_parts:
-            summary_lines.append(" · ".join(tag_parts))
-        if title:
-            summary_lines.append(f"**{title}**")
-        if content:
-            summary_lines.append(content[:300])
+            lines.append(" · ".join(tag_parts))
+        if title_zh:
+            lines.append(f"**{title_zh}**")
+        if summary_zh:
+            lines.append(summary_zh)
         if url:
-            summary_lines.append(f"\n[阅读原文]({url})")
+            lines.append(f"\n[阅读原文]({url})")
 
-        elements: list[dict] = [_md("\n".join(summary_lines))]
-
-        # Detail section (collapsed): quality, score, full content
-        detail_parts = []
-        if quality is not None:
-            detail_parts.append(f"质量: {quality:.2f}")
-        if pre_score is not None:
-            detail_parts.append(f"评分: {pre_score:.2f}")
-        if content and len(content) > 300:
-            detail_parts.append(f"\n{content}")
-        if detail_parts:
-            elements.append(_collapsible("详细信息", [_md(" | ".join(detail_parts[:2]) + ("" if len(detail_parts) <= 2 else detail_parts[2]))]))
-
-        return elements
+        return [_md("\n".join(lines))]
 
     def _format_defense_digest_card(self, alerts: list[Alert]) -> dict[str, Any]:
         """Aggregate multiple defense alerts into a single digest card."""
@@ -732,7 +716,7 @@ class FeishuWebhookDelivery(BaseDelivery):
             inner_elements = self._format_defense_card(alert)
             event = alert.event
             data = event.data or {}
-            collapse_title = data.get("title", alert.title)
+            collapse_title = data.get("title_zh") or data.get("title", alert.title)
             elements.append(_collapsible(collapse_title, inner_elements, expanded=False))
 
         return {
@@ -1110,13 +1094,17 @@ class FeishuWebhookDelivery(BaseDelivery):
             )
 
         if defense_alerts:
-            payload = self._format_defense_digest_card(defense_alerts)
-            results.append(
-                await self._send_digest(
-                    payload,
-                    f"Defense digest ({len(defense_alerts)} alerts)",
+            # Split into chunks of 20 to avoid Feishu element limit
+            chunk_size = 20
+            for i in range(0, len(defense_alerts), chunk_size):
+                chunk = defense_alerts[i:i + chunk_size]
+                payload = self._format_defense_digest_card(chunk)
+                results.append(
+                    await self._send_digest(
+                        payload,
+                        f"Defense digest ({len(chunk)} alerts, batch {i // chunk_size + 1})",
+                    )
                 )
-            )
 
         for a in other_alerts:
             results.append(await self.send(a))

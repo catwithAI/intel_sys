@@ -43,6 +43,8 @@ class NormalizedEvent:
     dedup_keys: dict[str, str] = field(default_factory=dict)
     raw_metadata: dict[str, Any] = field(default_factory=dict)
     pre_score: float = 0.0
+    title_zh: str = ""
+    summary_zh: str = ""
 
 
 class SourceAccess(BaseModel):

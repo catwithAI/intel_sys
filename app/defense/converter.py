@@ -11,6 +11,8 @@ def to_event(normalized: NormalizedEvent) -> Event:
         source_id=normalized.source_id,
         data={
             "title": normalized.title,
+            "title_zh": normalized.title_zh,
+            "summary_zh": normalized.summary_zh,
             "content": normalized.body,
             "summary_hint": normalized.summary_hint,
             "url": normalized.url,

@@ -149,6 +149,31 @@ async def ingest_defense_news(ctx: RuleContext) -> bool:
     top_events = scorer.topk(scored, settings.defense_topk)
     stats["after_stage2_topk"] = len(top_events)
 
+    # 7.5 Batch translate titles + summaries
+    if top_events:
+        batch_size = 20
+        for i in range(0, len(top_events), batch_size):
+            batch = top_events[i:i + batch_size]
+            items = [
+                {"id": str(j), "title": ne.title, "body": ne.body}
+                for j, ne in enumerate(batch)
+            ]
+            try:
+                result = await ctx.ai.analyze(
+                    "defense/translate.jinja2",
+                    {"items": items},
+                    parse_json=True,
+                )
+                if isinstance(result, list):
+                    for entry in result:
+                        idx = int(entry.get("id", -1))
+                        if 0 <= idx < len(batch):
+                            batch[idx].title_zh = entry.get("title_zh", "")
+                            batch[idx].summary_zh = entry.get("summary_zh", "")
+            except Exception:
+                ctx.logger.warning("Defense translate batch %d failed, using originals", i)
+    stats["translated"] = sum(1 for ne in top_events if ne.title_zh)
+
     # 8. Convert → Event → Memory Pool (all events)
     events = [to_event(ne) for ne in top_events]
     pool = EventMemoryPool(ctx.db, ctx.ai)
@@ -164,7 +189,7 @@ async def ingest_defense_news(ctx: RuleContext) -> bool:
                 source=SourceType.DEFENSE,
                 rule_name="ingest_defense_news",
                 severity=_score_to_severity(ne.pre_score),
-                title=f"[DEFENSE] {ne.title}",
+                title=f"[防务] {ne.title_zh or ne.title}",
                 event=ev,
             )
             alerts.append(alert)
