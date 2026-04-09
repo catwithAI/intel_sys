@@ -149,7 +149,7 @@ async def ingest_defense_news(ctx: RuleContext) -> bool:
     top_events = scorer.topk(scored, settings.defense_topk)
     stats["after_stage2_topk"] = len(top_events)
 
-    # 7.5 Batch translate titles + summaries
+    # 7.5 Batch translate titles + summaries (with 1 retry)
     if top_events:
         batch_size = 20
         for i in range(0, len(top_events), batch_size):
@@ -158,20 +158,29 @@ async def ingest_defense_news(ctx: RuleContext) -> bool:
                 {"id": str(j), "title": ne.title, "body": ne.body}
                 for j, ne in enumerate(batch)
             ]
-            try:
-                result = await ctx.ai.analyze(
-                    "defense/translate.jinja2",
-                    {"items": items},
-                    parse_json=True,
-                )
-                if isinstance(result, list):
-                    for entry in result:
-                        idx = int(entry.get("id", -1))
-                        if 0 <= idx < len(batch):
-                            batch[idx].title_zh = entry.get("title_zh", "")
-                            batch[idx].summary_zh = entry.get("summary_zh", "")
-            except Exception:
-                ctx.logger.warning("Defense translate batch %d failed, using originals", i)
+            for attempt in range(2):
+                try:
+                    result = await ctx.ai.analyze(
+                        "defense/translate.jinja2",
+                        {"items": items},
+                        parse_json=True,
+                    )
+                    if isinstance(result, list) and result:
+                        for entry in result:
+                            idx = int(entry.get("id", -1))
+                            if 0 <= idx < len(batch):
+                                batch[idx].title_zh = entry.get("title_zh", "")
+                                batch[idx].summary_zh = entry.get("summary_zh", "")
+                        break  # success
+                    elif attempt == 0:
+                        ctx.logger.warning("Defense translate batch %d returned empty, retrying", i)
+                        await asyncio.sleep(2)
+                except Exception:
+                    if attempt == 0:
+                        ctx.logger.warning("Defense translate batch %d failed, retrying", i)
+                        await asyncio.sleep(2)
+                    else:
+                        ctx.logger.warning("Defense translate batch %d failed after retry, using originals", i)
     stats["translated"] = sum(1 for ne in top_events if ne.title_zh)
 
     # 8. Convert → Event → Memory Pool (all events)
