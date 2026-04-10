@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -22,3 +22,4 @@ class RuleContext:
     config: RuleConfig
     delivery: BaseDelivery
     logger: logging.Logger = field(default_factory=lambda: logging.getLogger("rule"))
+    app_state: Any = None

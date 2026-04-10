@@ -34,6 +34,7 @@ async def execute_rule(
     redis_client: aioredis.Redis,
     ai_client: AIClient,
     delivery,
+    app_state=None,
 ) -> None:
     """Wrapper that constructs RuleContext and executes a rule."""
     meta = rule_registry.rules.get(rule_name)
@@ -52,12 +53,15 @@ async def execute_rule(
         config=config,
         delivery=delivery,
         logger=logging.getLogger(f"rule.{rule_name}"),
+        app_state=app_state,
     )
 
     try:
         logger.info("Executing rule: %s", rule_name)
         result = await meta.fn(ctx)
         logger.info("Rule %s completed: result=%s", rule_name, result)
+    except asyncio.CancelledError:
+        logger.info("Rule %s cancelled (shutdown)", rule_name)
     except Exception:
         logger.exception("Rule %s failed", rule_name)
 
@@ -84,7 +88,7 @@ async def lifespan(app: FastAPI):
     ai_client = AIClient()
     app.state.ai_client = ai_client
 
-    # Delivery
+    # Delivery (main)
     if settings.feishu_webhook_url:
         delivery = FeishuWebhookDelivery(
             settings.feishu_webhook_url, settings.feishu_webhook_secret
@@ -94,6 +98,46 @@ async def lifespan(app: FastAPI):
         delivery = NoopDelivery()
         logger.info("Feishu delivery disabled (no webhook URL)")
     app.state.delivery = delivery
+
+    # Defense Feishu delivery (independent bot)
+    if settings.feishu_defense_webhook_url:
+        defense_delivery = FeishuWebhookDelivery(
+            settings.feishu_defense_webhook_url, settings.feishu_defense_webhook_secret
+        )
+        logger.info("Defense Feishu delivery enabled")
+    else:
+        defense_delivery = NoopDelivery()
+        logger.info("Defense Feishu delivery disabled (no webhook URL)")
+
+    # PostgreSQL (optional, skip if not configured)
+    pg_pool = None
+    if settings.pg_dsn:
+        try:
+            import asyncpg
+            pg_pool = await asyncpg.create_pool(
+                settings.pg_dsn,
+                min_size=settings.pg_pool_min,
+                max_size=settings.pg_pool_max,
+            )
+            # Init defense tables
+            from app.defense.storage import DefenseStorage
+            storage = DefenseStorage(pg_pool)
+            await storage.init_tables()
+            logger.info("PostgreSQL connected and defense tables initialized")
+        except Exception:
+            logger.warning("PostgreSQL connection failed — defense persistence disabled")
+            pg_pool = None
+
+    app.state.pg_pool = pg_pool
+    app.state.defense_delivery = defense_delivery
+
+    # Build app_state namespace for defense rules
+    from types import SimpleNamespace
+    app_state = SimpleNamespace(
+        pg_pool=pg_pool,
+        defense_delivery=defense_delivery,
+    )
+    app.state.defense_app_state = app_state
 
     # Load rules
     rule_registry.clear()
@@ -105,7 +149,7 @@ async def lifespan(app: FastAPI):
     app.state.scheduler = scheduler
 
     for name, meta in rule_registry.rules.items():
-        job_fn = partial(execute_rule, name, redis_client, ai_client, delivery)
+        job_fn = partial(execute_rule, name, redis_client, ai_client, delivery, app_state)
         scheduler.register_rule(meta, job_fn)
 
     scheduler.start()
@@ -116,8 +160,11 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down Intel System...")
     scheduler.shutdown()
     await delivery.close()
+    await defense_delivery.close()
     await ai_client.close()
     await redis_client.aclose()
+    if pg_pool:
+        await pg_pool.close()
 
 
 app = FastAPI(

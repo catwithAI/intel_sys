@@ -148,6 +148,7 @@ async def discover_trending_repos(ctx: RuleContext) -> bool:
         # ------------------------------------------------------------------
         # 5. New project flow (existing logic, unchanged)
         # ------------------------------------------------------------------
+        all_alerts: list[Alert] = []
         alerts_created = 0
         skipped_count = 0
 
@@ -252,7 +253,7 @@ async def discover_trending_repos(ctx: RuleContext) -> bool:
                 json.dumps({"ts": now_ts, "stars": event.data.get("stars", 0)}),
                 ex=30 * 86400,
             )
-            await ctx.delivery.send(alert)
+            all_alerts.append(alert)
 
             alerts_created += 1
             logger.info("Alert created for %s: %s", full_name, recommendation)
@@ -352,13 +353,19 @@ async def discover_trending_repos(ctx: RuleContext) -> bool:
                 json.dumps({"ts": now_ts, "stars": event.data.get("stars", 0)}),
                 ex=30 * 86400,
             )
-            await ctx.delivery.send(alert)
+            all_alerts.append(alert)
 
             update_alerts += 1
             logger.info("Update alert created for %s (%d PRs)", full_name, len(merged_prs))
 
         # ------------------------------------------------------------------
-        # 7. Summary
+        # 7. Batch delivery
+        # ------------------------------------------------------------------
+        if all_alerts:
+            await ctx.delivery.send_batch(all_alerts)
+
+        # ------------------------------------------------------------------
+        # 8. Summary
         # ------------------------------------------------------------------
         logger.info(
             "GitHub rule completed: %d new alerts, %d update alerts, %d skipped, %d candidates total",

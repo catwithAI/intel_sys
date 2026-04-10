@@ -305,6 +305,11 @@ async def _tier2_analyze(
             logger.exception("AI analysis failed for market %s", condition_id)
             ai_result = {}
 
+        # Skip alert if AI analysis failed or returned no useful content
+        if not ai_result or not ai_result.get("summary"):
+            logger.warning("Skipping market %s: AI returned empty result", condition_id)
+            continue
+
         ai_severity = ai_result.get("severity", "medium")
         severity_map = {"low": Severity.LOW, "medium": Severity.MEDIUM, "high": Severity.HIGH, "critical": Severity.CRITICAL}
         severity = severity_map.get(ai_severity, Severity.MEDIUM)
@@ -352,7 +357,29 @@ async def _tier2_analyze(
         # Set dedup key (24h TTL)
         await ctx.db.set(alert_dedup_key, "1", ex=86400)
 
-        await ctx.delivery.send(alert)
+        # Route: only geopolitical alerts → immediate push
+        #        everything else → 6-hourly digest buffer
+        ai_data_for_routing: dict = {}
+        try:
+            ai_data_for_routing = json.loads(alert.enrichment.analysis) if alert.enrichment.analysis else {}
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        geo_impact = ai_data_for_routing.get("geopolitical_impact", "").strip()
+        # Prompt instructs AI to return "" when no geopolitical relevance.
+        # Fallback: filter out residual "no impact" statements.
+        _no_impact_markers = (
+            "无影响", "无实质", "不涉及", "无关", "没有影响", "影响较小", "影响有限",
+            "no impact", "not relevant", "no direct", "limited impact",
+        )
+        has_geo_impact = bool(geo_impact) and not any(m in geo_impact for m in _no_impact_markers)
+        is_urgent = has_geo_impact
+
+        if is_urgent:
+            await ctx.delivery.send(alert)
+        else:
+            # Buffer for hourly digest
+            await ctx.db.lpush("pm:alerts:hourly_buffer", alert.model_dump_json())
 
         alerts_created += 1
         logger.info(

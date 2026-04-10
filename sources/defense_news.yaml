@@ -1,0 +1,141 @@
+- id: breakingdefense
+  collector: rss
+  country: US
+  language: en
+  credibility: 0.85
+  authority_tier: 1
+  url: https://breakingdefense.com/feed/
+  filters:
+    title_blacklist: [sponsored, podcast, careers]
+    title_whitelist: [hypersonic, missile, fighter, submarine, nuclear, drone, cyber]
+    junk_patterns: [change of command, ceremony, ribbon cutting]
+  extra:
+    name: Breaking Defense
+
+- id: defensenews
+  collector: rss
+  country: US
+  language: en
+  credibility: 0.85
+  authority_tier: 1
+  url: https://www.defensenews.com/arc/outboundfeeds/rss/?outputType=xml
+  filters:
+    title_blacklist: [sponsored, podcast]
+    title_whitelist: [missile, fighter, navy, army, air force, cyber, space]
+    junk_patterns: [change of command, ceremony]
+  extra:
+    name: Defense News
+
+- id: janes
+  enabled: false  # RSS feed discontinued (404)
+  collector: rss
+  country: GB
+  language: en
+  credibility: 0.9
+  authority_tier: 1
+  url: https://www.janes.com/feeds/news
+  filters:
+    title_blacklist: [sponsored]
+    title_whitelist: [missile, fighter, radar, submarine, drone, electronic warfare]
+    junk_patterns: [appointment, ceremony]
+  extra:
+    name: "Janes"
+
+- id: defensescoop
+  collector: rss
+  country: US
+  language: en
+  credibility: 0.75
+  authority_tier: 2
+  url: https://defensescoop.com/feed/
+  filters:
+    title_blacklist: [sponsored, podcast]
+    title_whitelist: [cyber, ai, cloud, satellite, missile defense]
+    junk_patterns: [ceremony, ribbon cutting]
+  extra:
+    name: DefenseScoop
+
+- id: thewarzone
+  collector: rss
+  country: US
+  language: en
+  credibility: 0.8
+  authority_tier: 1
+  url: https://www.twz.com/feed
+  filters:
+    title_blacklist: [sponsored]
+    title_whitelist: [fighter, bomber, missile, drone, submarine, stealth]
+    junk_patterns: [ceremony]
+  extra:
+    name: The War Zone
+
+- id: naval_news
+  collector: rss
+  country: INT
+  language: en
+  credibility: 0.8
+  authority_tier: 1
+  url: https://www.navalnews.com/feed/
+  filters:
+    title_blacklist: [sponsored]
+    title_whitelist: [submarine, frigate, carrier, destroyer, corvette, torpedo]
+    junk_patterns: [ceremony, keel laying]
+  extra:
+    name: Naval News
+
+- id: airforcemag
+  collector: rss
+  country: US
+  language: en
+  credibility: 0.75
+  authority_tier: 2
+  url: https://www.airandspaceforces.com/feed/
+  filters:
+    title_blacklist: [sponsored, podcast]
+    title_whitelist: [fighter, bomber, tanker, satellite, space force, drone]
+    junk_patterns: [ceremony, change of command]
+  extra:
+    name: Air & Space Forces Magazine
+
+- id: armyrecognition
+  enabled: false  # RSS feed discontinued (404)
+  collector: rss
+  country: BE
+  language: en
+  credibility: 0.7
+  authority_tier: 2
+  url: https://www.armyrecognition.com/rss
+  filters:
+    title_blacklist: [sponsored]
+    title_whitelist: [tank, artillery, ifv, apc, missile, radar]
+    junk_patterns: [exhibition booth, ceremony]
+  extra:
+    name: Army Recognition
+
+- id: ukdefjournal
+  collector: rss
+  country: GB
+  language: en
+  credibility: 0.75
+  authority_tier: 2
+  url: https://ukdefencejournal.org.uk/feed/
+  filters:
+    title_blacklist: [sponsored]
+    title_whitelist: [fighter, frigate, carrier, submarine, missile, typhoon]
+    junk_patterns: [ceremony, parade]
+  extra:
+    name: UK Defence Journal
+
+- id: defenseone
+  collector: rss
+  country: US
+  language: en
+  credibility: 0.8
+  authority_tier: 1
+  url: https://www.defenseone.com/rss/all/
+  filters:
+    title_blacklist: [sponsored, podcast]
+    title_whitelist: [missile, cyber, ai, drone, nuclear, space]
+    junk_patterns: [ceremony, change of command]
+  extra:
+    name: Defense One

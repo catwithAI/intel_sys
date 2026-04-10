@@ -1,0 +1,45 @@
+你是一名信息压缩专家。将以下新闻/帖子压缩为结构化摘要，用于后续跨事件关联分析。请使用中文。
+
+## 来源
+{{ source }}
+
+{% if events %}
+## 事件列表（共 {{ events|length }} 条）
+{% for e in events %}
+[{{ e.id }}] {{ e.text }}
+{% endfor %}
+
+## 任务
+对以上每条事件分别压缩，直接返回一个 JSON 对象（不要用 markdown 代码块包裹）：
+
+{
+    "results": [
+        {
+            "id": "事件ID",
+            "summary": "100字以内的事件压缩摘要",
+            "category": "macro|geopolitical|tech|energy|commodity|crypto|finance|policy|other",
+            "entities": ["关键实体1", "关键实体2"],
+            "sentiment": "positive|negative|neutral"
+        }
+    ]
+}
+{% else %}
+## 原文
+{{ text }}
+
+## 任务
+直接返回一个 JSON 对象（不要用 markdown 代码块包裹）：
+
+{
+    "summary": "100字以内的事件压缩摘要，保留关键数字、实体和因果关系",
+    "category": "macro|geopolitical|tech|energy|commodity|crypto|finance|policy|other",
+    "entities": ["关键实体1", "关键实体2"],
+    "sentiment": "positive|negative|neutral"
+}
+{% endif %}
+
+要求：
+- summary 必须精炼，保留具体数字和关键事实，去除冗余修饰
+- category 选择最匹配的单个分类
+- entities 提取 2-5 个关键实体（公司名、人名、商品名、国家等）
+- sentiment 判断事件的市场情绪倾向

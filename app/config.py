@@ -67,6 +67,59 @@ class Settings(BaseSettings):
     # Alert storage
     alert_max_per_source: int = 100
 
+    # 财联社 (CLS)
+    cls_base_url: str = "https://www.cls.cn/nodeapi"
+    cls_fetch_limit: int = 50
+
+    # Reddit
+    reddit_client_id: str = ""
+    reddit_client_secret: str = ""
+    reddit_user_agent: str = "intel_sys/0.1"
+    reddit_subreddits: list[str] = ["wallstreetbets", "investing", "stocks"]
+    reddit_min_score: int = 50
+    reddit_fetch_limit: int = 25
+
+    # 雪球 (Xueqiu)
+    xueqiu_cookie: str = ""
+    xueqiu_fetch_limit: int = 20
+
+    # Event Memory Pool
+    memory_pool_key: str = "memory:events"
+    memory_pool_ttl_days: int = 7
+    memory_compress_max_chars: int = 100
+
+    # Correlation Engine
+    correlation_interval: int = 1800
+    correlation_lookback_hours: int = 168
+    correlation_min_events: int = 10
+    correlation_context_max_chars: int = 12000
+
+    # Insight Delivery (独立飞书 webhook)
+    feishu_insight_webhook_url: str = ""
+    feishu_insight_webhook_secret: str = ""
+
+    # Defense News Scraping
+    defense_rss_interval: int = 1800
+    defense_rss_concurrency: int = 5
+    defense_domain_min_interval: float = 10.0
+    defense_rss_timeout: float = 15.0
+    defense_topk: int = 200
+    defense_dedup_ttl: int = 604800
+    defense_max_entries_per_source: int = 30
+    defense_cooldown_hours: int = 6
+    defense_max_consecutive_failures: int = 3
+    defense_disable_threshold: int = 10
+    defense_alert_threshold: float = 0.3
+
+    # PostgreSQL
+    pg_dsn: str = ""
+    pg_pool_min: int = 2
+    pg_pool_max: int = 10
+
+    # Defense Feishu Webhook (独立 bot)
+    feishu_defense_webhook_url: str = ""
+    feishu_defense_webhook_secret: str = ""
+
     @classmethod
     def settings_customise_sources(cls, settings_cls, **kwargs):
         """Allow JSON strings for list fields from env vars."""

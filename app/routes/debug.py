@@ -43,17 +43,44 @@ async def debug_events(source: str, request: Request):
 
 @router.get("/debug/state/{key:path}")
 async def debug_state(key: str, request: Request):
-    """Query a Redis key for debugging."""
+    """Query a Redis key for debugging. Supports string, list, set, zset, hash."""
+    import json as _json
+
     redis = request.app.state.redis
-    val = await redis.get(key)
-    if val is None:
-        return {"key": key, "value": None, "exists": False}
-    try:
-        import json
-        parsed = json.loads(val)
-        return {"key": key, "value": parsed, "exists": True}
-    except (json.JSONDecodeError, TypeError):
-        return {"key": key, "value": val.decode() if isinstance(val, bytes) else val, "exists": True}
+    key_type = await redis.type(key)
+
+    if key_type == "none":
+        return {"key": key, "type": "none", "value": None, "exists": False}
+
+    if key_type == "string":
+        val = await redis.get(key)
+        try:
+            parsed = _json.loads(val)
+            return {"key": key, "type": "string", "value": parsed, "exists": True}
+        except (_json.JSONDecodeError, TypeError):
+            return {"key": key, "type": "string", "value": val, "exists": True}
+
+    if key_type == "list":
+        val = await redis.lrange(key, 0, 9)
+        return {"key": key, "type": "list", "length": await redis.llen(key), "value": val[:10], "exists": True}
+
+    if key_type == "zset":
+        count = await redis.zcard(key)
+        # Return last 10 (most recent by score)
+        val = await redis.zrevrange(key, 0, 9, withscores=True)
+        items = [{"member": m, "score": s} for m, s in val]
+        return {"key": key, "type": "zset", "count": count, "value": items, "exists": True}
+
+    if key_type == "set":
+        count = await redis.scard(key)
+        val = await redis.srandmember(key, 10)
+        return {"key": key, "type": "set", "count": count, "value": val, "exists": True}
+
+    if key_type == "hash":
+        val = await redis.hgetall(key)
+        return {"key": key, "type": "hash", "value": val, "exists": True}
+
+    return {"key": key, "type": key_type, "value": None, "exists": True}
 
 
 @router.get("/debug/scheduler")
@@ -131,6 +158,7 @@ async def trigger_rule(rule_name: str, request: Request):
     redis = request.app.state.redis
     ai_client = request.app.state.ai_client
     delivery = request.app.state.delivery
+    app_state = getattr(request.app.state, "defense_app_state", None)
 
     ctx = RuleContext(
         data={},
@@ -139,6 +167,7 @@ async def trigger_rule(rule_name: str, request: Request):
         config=RuleConfig(name=meta.name, source=SourceType(meta.source)),
         delivery=delivery,
         logger=logging.getLogger(f"rule.{rule_name}"),
+        app_state=app_state,
     )
 
     t0 = time.time()
@@ -170,6 +199,7 @@ async def trigger_source(source: str, request: Request):
     redis = request.app.state.redis
     ai_client = request.app.state.ai_client
     delivery = request.app.state.delivery
+    app_state = getattr(request.app.state, "defense_app_state", None)
     results = {}
 
     for name, meta in matching.items():
@@ -180,6 +210,7 @@ async def trigger_source(source: str, request: Request):
             config=RuleConfig(name=meta.name, source=SourceType(meta.source)),
             delivery=delivery,
             logger=logging.getLogger(f"rule.{name}"),
+            app_state=app_state,
         )
         t0 = time.time()
         try:
@@ -204,9 +235,10 @@ async def reload_rules(request: Request):
     redis_client = request.app.state.redis
     ai_client = request.app.state.ai_client
     delivery = request.app.state.delivery
+    app_state = getattr(request.app.state, "defense_app_state", None)
 
     for name, meta in rule_registry.rules.items():
-        job_fn = partial(execute_rule, name, redis_client, ai_client, delivery)
+        job_fn = partial(execute_rule, name, redis_client, ai_client, delivery, app_state)
         scheduler.register_rule(meta, job_fn)
 
     return {
@@ -214,3 +246,28 @@ async def reload_rules(request: Request):
         "rules": list(rule_registry.rules.keys()),
         "count": len(rule_registry.rules),
     }
+
+
+@router.get("/debug/defense/health")
+async def defense_health(request: Request):
+    """Get defense source health status."""
+    pg_pool = getattr(request.app.state, "pg_pool", None)
+    if not pg_pool:
+        return {"error": "PostgreSQL not configured", "records": []}
+    from app.defense.storage import DefenseStorage
+    storage = DefenseStorage(pg_pool)
+    records = await storage.get_source_health()
+    return {"records": records}
+
+
+@router.get("/debug/defense/runs")
+async def defense_runs(request: Request):
+    """Get recent defense run history."""
+    pg_pool = getattr(request.app.state, "pg_pool", None)
+    if not pg_pool:
+        return {"error": "PostgreSQL not configured", "runs": []}
+    async with pg_pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT * FROM run_history ORDER BY created_at DESC LIMIT 20"
+        )
+    return {"runs": [dict(r) for r in rows]}
