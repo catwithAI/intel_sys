@@ -27,7 +27,14 @@ class AIClient:
             loader=FileSystemLoader(str(PROMPTS_DIR)),
             autoescape=False,
         )
-        self._http = httpx.AsyncClient(timeout=60.0)
+        self._http = httpx.AsyncClient(
+            timeout=120.0,
+            limits=httpx.Limits(
+                max_connections=20,
+                max_keepalive_connections=5,
+                keepalive_expiry=60,
+            ),
+        )
 
     async def analyze(
         self,
@@ -51,8 +58,8 @@ class AIClient:
             return self._extract_json(response_text)
         return response_text
 
-    async def _call_llm(self, prompt: str) -> str:
-        """Call OpenRouter chat completions API."""
+    async def _call_llm(self, prompt: str, max_retries: int = 3) -> str:
+        """Call OpenRouter chat completions API with retry on transient errors."""
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
@@ -63,19 +70,51 @@ class AIClient:
             "temperature": 0.3,
         }
 
-        try:
-            resp = await self._http.post(self._base_url, headers=headers, json=payload)
-            if resp.status_code != 200:
-                logger.error("OpenRouter API error %d: %s", resp.status_code, resp.text[:500])
+        for attempt in range(max_retries):
+            try:
+                resp = await self._http.post(self._base_url, headers=headers, json=payload)
+                if resp.status_code == 429 or resp.status_code >= 500:
+                    wait = min(2 ** attempt * 3, 30)
+                    logger.warning(
+                        "OpenRouter API %d (model=%s), retry %d/%d in %ds",
+                        resp.status_code, self._model, attempt + 1, max_retries, wait,
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                if resp.status_code != 200:
+                    logger.error("OpenRouter API error %d (model=%s): %s", resp.status_code, self._model, resp.text[:500])
+                    return "{}"
+                data = resp.json()
+                return data["choices"][0]["message"]["content"]
+            except asyncio.CancelledError:
+                logger.warning("OpenRouter API call cancelled (shutdown?)")
+                raise
+            except (httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout) as exc:
+                wait = min(2 ** attempt * 3, 30)
+                logger.warning(
+                    "OpenRouter API transient error (model=%s, attempt %d/%d): %s, retry in %ds",
+                    self._model, attempt + 1, max_retries, type(exc).__name__, wait,
+                )
+                # Rebuild HTTP client to discard stale connections
+                try:
+                    await self._http.aclose()
+                except Exception:
+                    pass
+                self._http = httpx.AsyncClient(
+                    timeout=120.0,
+                    limits=httpx.Limits(
+                        max_connections=20,
+                        max_keepalive_connections=5,
+                        keepalive_expiry=60,
+                    ),
+                )
+                await asyncio.sleep(wait)
+            except Exception:
+                logger.exception("OpenRouter API call failed (model=%s)", self._model)
                 return "{}"
-            data = resp.json()
-            return data["choices"][0]["message"]["content"]
-        except asyncio.CancelledError:
-            logger.warning("OpenRouter API call cancelled (shutdown?)")
-            raise
-        except Exception:
-            logger.exception("OpenRouter API call failed")
-            return "{}"
+
+        logger.error("OpenRouter API failed after %d retries (model=%s)", max_retries, self._model)
+        return "{}"
 
     @staticmethod
     def _extract_json(text: str) -> dict[str, Any]:
