@@ -165,6 +165,12 @@ async def ingest_defense_news(ctx: RuleContext) -> bool:
                         {"items": items},
                         parse_json=True,
                     )
+                    ctx.logger.info(
+                        "Defense translate batch %d attempt %d: type=%s len=%s sample=%s",
+                        i, attempt, type(result).__name__,
+                        len(result) if isinstance(result, (list, dict)) else "N/A",
+                        str(result)[:200],
+                    )
                     if isinstance(result, list) and result:
                         for entry in result:
                             idx = int(entry.get("id", -1))
@@ -172,15 +178,16 @@ async def ingest_defense_news(ctx: RuleContext) -> bool:
                                 batch[idx].title_zh = entry.get("title_zh", "")
                                 batch[idx].summary_zh = entry.get("summary_zh", "")
                         break  # success
+                    elif isinstance(result, dict) and "raw" not in result:
+                        # Maybe LLM returned a dict wrapping a list
+                        ctx.logger.warning("Defense translate batch %d got dict instead of list: %s", i, str(result)[:200])
                     elif attempt == 0:
-                        ctx.logger.warning("Defense translate batch %d returned empty, retrying", i)
+                        ctx.logger.warning("Defense translate batch %d returned empty/invalid, retrying", i)
                         await asyncio.sleep(2)
-                except Exception:
+                except Exception as exc:
+                    ctx.logger.warning("Defense translate batch %d attempt %d error: %s", i, attempt, exc)
                     if attempt == 0:
-                        ctx.logger.warning("Defense translate batch %d failed, retrying", i)
                         await asyncio.sleep(2)
-                    else:
-                        ctx.logger.warning("Defense translate batch %d failed after retry, using originals", i)
     stats["translated"] = sum(1 for ne in top_events if ne.title_zh)
 
     # 8. Convert → Event → Memory Pool (all events)
