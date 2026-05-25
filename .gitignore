@@ -208,3 +208,5 @@ web-client/release/
 agent_templates/_uploaded/
 
 情报信息来源渠道.docx
+*.csv
+*.xlsx
