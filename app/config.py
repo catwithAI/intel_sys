@@ -66,6 +66,8 @@ class Settings(BaseSettings):
 
     # Alert storage
     alert_max_per_source: int = 100
+    # Polymarket 单独放大,用于回溯 6 个月内的预测命中率
+    alert_max_polymarket: int = 50000
 
     # 财联社 (CLS)
     cls_base_url: str = "https://www.cls.cn/nodeapi"

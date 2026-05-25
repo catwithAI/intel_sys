@@ -345,7 +345,7 @@ async def _tier2_analyze(
         # Store alert
         alert_json = alert.model_dump_json()
         await ctx.db.lpush("alerts:polymarket", alert_json)
-        await ctx.db.ltrim("alerts:polymarket", 0, settings.alert_max_per_source - 1)
+        await ctx.db.ltrim("alerts:polymarket", 0, settings.alert_max_polymarket - 1)
 
         # Publish to Redis Stream for poly_trader consumption
         await ctx.db.xadd(
