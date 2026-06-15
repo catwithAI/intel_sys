@@ -166,7 +166,12 @@ def _build_event_digest(events: list[MemoryEvent], max_chars: int) -> str:
 
 
 async def _send_insights(alerts: list[Alert]) -> None:
-    """Send insights via dedicated webhook as a single digest when possible."""
+    """Send insights via dedicated webhook as a single digest when possible.
+
+    If delivery fails even after the digest sender's internal retries, raise a
+    fallback alert on the main webhook so a silently-dropped daily push becomes
+    visible instead of vanishing into the logs.
+    """
     if not settings.feishu_insight_webhook_url:
         logger.info("Insight webhook not configured, skipping delivery")
         return
@@ -176,9 +181,34 @@ async def _send_insights(alerts: list[Alert]) -> None:
         settings.feishu_insight_webhook_secret,
     )
     try:
-        await delivery.send_batch(alerts)
+        ok = await delivery.send_batch(alerts)
     finally:
         await delivery.close()
+
+    if not ok:
+        logger.error("Correlation digest delivery failed for %d alerts", len(alerts))
+        await _notify_insight_delivery_failure(len(alerts))
+
+
+async def _notify_insight_delivery_failure(alert_count: int) -> None:
+    """Push a plain-text heads-up to the main webhook when insight delivery fails."""
+    if not settings.feishu_webhook_url:
+        return
+
+    text = (
+        f"⚠️ 关联推理洞察推送失败：{alert_count} 条洞察已生成但未能送达 insight 群"
+        f"（已重试，仍失败）。请检查 insight webhook。告警已存于 alerts:correlation。"
+    )
+    fallback = FeishuWebhookDelivery(
+        settings.feishu_webhook_url,
+        settings.feishu_webhook_secret,
+    )
+    try:
+        await fallback.send_text(text)
+    except Exception:
+        logger.exception("Failed to send insight-delivery-failure notice")
+    finally:
+        await fallback.close()
 
 
 @rule_registry.register(

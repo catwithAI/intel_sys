@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import base64
@@ -1026,24 +1027,50 @@ class FeishuWebhookDelivery(BaseDelivery):
     # ------------------------------------------------------------------
     # Send
     # ------------------------------------------------------------------
-    async def _send_digest(self, payload: dict[str, Any], label: str = "digest") -> bool:
-        """Send a pre-formatted digest card payload."""
-        if self._secret:
-            ts = int(time.time())
-            payload["timestamp"] = str(ts)
-            payload["sign"] = self._gen_sign(ts)
+    async def _send_digest(
+        self, payload: dict[str, Any], label: str = "digest", max_attempts: int = 3
+    ) -> bool:
+        """Send a pre-formatted digest card payload, with backoff retries.
 
-        try:
-            resp = await self._http.post(self._webhook_url, json=payload)
-            data = resp.json()
-            if data.get("code") == 0:
-                logger.info("Feishu %s sent", label)
-                return True
-            logger.warning("Feishu %s error: %s", label, data)
-            return False
-        except Exception:
-            logger.exception("Failed to send Feishu %s", label)
-            return False
+        Digest cards are low-frequency, high-value pushes (e.g. the daily
+        correlation insight). A single transient network/timeout error used to
+        silently drop the whole day's push, so we retry with exponential
+        backoff. Signing happens inside the loop because the timestamp (and
+        therefore the signature) changes on each attempt.
+        """
+        last_err: str = ""
+        for attempt in range(1, max_attempts + 1):
+            if self._secret:
+                ts = int(time.time())
+                payload["timestamp"] = str(ts)
+                payload["sign"] = self._gen_sign(ts)
+
+            try:
+                resp = await self._http.post(self._webhook_url, json=payload)
+                data = resp.json()
+                if data.get("code") == 0:
+                    if attempt > 1:
+                        logger.info("Feishu %s sent (attempt %d)", label, attempt)
+                    else:
+                        logger.info("Feishu %s sent", label)
+                    return True
+                last_err = str(data)
+                logger.warning(
+                    "Feishu %s error (attempt %d/%d): %s",
+                    label, attempt, max_attempts, data,
+                )
+            except Exception as e:
+                last_err = repr(e)
+                logger.warning(
+                    "Feishu %s send failed (attempt %d/%d): %r",
+                    label, attempt, max_attempts, e,
+                )
+
+            if attempt < max_attempts:
+                await asyncio.sleep(2 ** (attempt - 1))
+
+        logger.error("Feishu %s permanently failed after %d attempts: %s", label, max_attempts, last_err)
+        return False
 
     async def send_batch(self, alerts: list[Alert]) -> bool:
         """Send multiple alerts as digest cards grouped by source.
@@ -1179,6 +1206,28 @@ class FeishuWebhookDelivery(BaseDelivery):
             logger.exception("v1 fallback failed: %s", alert.title[:60])
             return False
 
+    async def send_text(self, text: str) -> bool:
+        """Send a plain-text message. Used for operational notices/alarms.
+
+        Plain text is the most robust payload (no card schema to be rejected),
+        which is why delivery-failure notices use it rather than a card.
+        """
+        payload: dict[str, Any] = {"msg_type": "text", "content": {"text": text}}
+        if self._secret:
+            ts = int(time.time())
+            payload["timestamp"] = str(ts)
+            payload["sign"] = self._gen_sign(ts)
+        try:
+            resp = await self._http.post(self._webhook_url, json=payload)
+            data = resp.json()
+            if data.get("code") == 0:
+                return True
+            logger.warning("Feishu send_text error: %s", data)
+            return False
+        except Exception:
+            logger.exception("Feishu send_text failed")
+            return False
+
     async def close(self) -> None:
         await self._http.aclose()
 
@@ -1187,6 +1236,9 @@ class NoopDelivery(BaseDelivery):
     """No-op delivery used when no webhook is configured."""
 
     async def send(self, alert: Alert) -> bool:
+        return True
+
+    async def send_text(self, text: str) -> bool:
         return True
 
     async def close(self) -> None:
