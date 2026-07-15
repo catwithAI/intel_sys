@@ -64,7 +64,7 @@ Delivery
 | `ingest_cls_news` | `cls` | `interval:120s` | 财联社入池 |
 | `ingest_xueqiu_news` | `xueqiu` | `interval:300s` | 雪球入池 |
 | `ingest_reddit_posts` | `reddit` | `interval:1800s` | Reddit 入池 |
-| `discover_cross_event_insights` | `correlation` | `cron:30 15 * * *` | 每日关联推理 digest |
+| `discover_cross_event_insights` | `correlation` | `cron:30 14 * * *` | 每日关联推理 digest |
 | `ingest_defense_news` | `defense` | `interval:{DEFENSE_RSS_INTERVAL}s` | 防务 RSS 管线 |
 
 ## 4. 关键模块

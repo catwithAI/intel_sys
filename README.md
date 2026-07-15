@@ -12,7 +12,7 @@ Source -> Event -> Rule -> AI -> Alert -> Delivery
 - `GitHub`：每日扫描 trending / star delta 项目，区分新项目和项目更新
 - `Hacker News`：每日 `16:30` 聚合推送热门话题
 - `CLS / 雪球 / Reddit`：持续采集并压缩入记忆池，不直接告警
-- `Correlation`：每日 `15:30` 基于记忆池做跨事件关联推理并聚合推送
+- `Correlation`：每日 `14:30` 基于记忆池做跨事件关联推理并聚合推送
 - `Defense`：配置驱动的防务 RSS 采集管线，支持 YAML source registry、去重、评分、可选 PostgreSQL 落库、独立飞书机器人
 
 ## 系统架构
@@ -142,7 +142,7 @@ intel_sys/
 | `send_polymarket_digest` | `cron:0 */6 * * *` | Polymarket 6 小时 digest |
 | `discover_trending_repos` | `cron:0 17 * * *` | GitHub 每日推送 |
 | `discover_hn_hot_topics` | `cron:30 16 * * *` | HN 每日聚合推送 |
-| `discover_cross_event_insights` | `cron:30 15 * * *` | 关联推理每日聚合推送 |
+| `discover_cross_event_insights` | `cron:30 14 * * *` | 关联推理每日聚合推送 |
 | `ingest_cls_news` | `interval:120s` | 财联社入池 |
 | `ingest_xueqiu_news` | `interval:300s` | 雪球入池 |
 | `ingest_reddit_posts` | `interval:1800s` | Reddit 入池 |

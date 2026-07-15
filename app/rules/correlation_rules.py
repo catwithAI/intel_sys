@@ -213,7 +213,7 @@ async def _notify_insight_delivery_failure(alert_count: int) -> None:
 
 @rule_registry.register(
     source="correlation",
-    schedule="cron:30 15 * * *",
+    schedule="cron:30 14 * * *",
     trigger="batch",
 )
 async def discover_cross_event_insights(ctx: RuleContext) -> bool:
