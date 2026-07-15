@@ -85,7 +85,11 @@ class AIClient:
                     logger.error("OpenRouter API error %d (model=%s): %s", resp.status_code, self._model, resp.text[:500])
                     return "{}"
                 data = resp.json()
-                return data["choices"][0]["message"]["content"]
+                content = data["choices"][0]["message"]["content"]
+                if not content:
+                    logger.warning("OpenRouter returned empty content (model=%s)", self._model)
+                    return "{}"
+                return content
             except asyncio.CancelledError:
                 logger.warning("OpenRouter API call cancelled (shutdown?)")
                 raise
