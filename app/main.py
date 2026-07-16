@@ -21,6 +21,7 @@ from app.engine.scheduler import Scheduler
 from app.models import RuleConfig, SourceType
 from app.routes.alerts import router as alerts_router
 from app.routes.debug import router as debug_router
+from app.routes.dashboard import router as dashboard_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -176,6 +177,7 @@ app = FastAPI(
 
 app.include_router(alerts_router)
 app.include_router(debug_router)
+app.include_router(dashboard_router)
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>情报系统 · 信源</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="/static/assets/theme.css">
+<style>
+  body { overflow-x: hidden; }
+  .radar-dot { position: relative; width: 8px; height: 8px; border-radius: 50%; }
+</style>
+</head>
+<body>
+<div x-data="sourcesView()" x-init="init()" x-cloak>
+
+  <!-- ============ SHELL HEADER ============ -->
+  <header class="shell-header">
+    <div class="max-w-6xl mx-auto px-5 md:px-8 py-3.5 flex items-center justify-between gap-3 flex-wrap">
+      <div class="flex items-center gap-3">
+        <span class="brand-mark">情报系统</span>
+        <span class="brand-sub hidden sm:inline">SIGNAL&nbsp;INTELLIGENCE&nbsp;RUNTIME</span>
+      </div>
+      <div class="flex items-center gap-5">
+        <div class="flex items-center gap-2">
+          <span class="status-dot"></span>
+          <span class="mono text-xs text-[var(--bone-dim)]">ONLINE</span>
+        </div>
+        <nav class="flex items-center gap-3 sm:gap-5 overflow-x-auto scrollbar-thin">
+          <a href="/static/index.html" class="nav-tab">信号流</a>
+          <a href="/static/filter.html" class="nav-tab">过滤机制</a>
+          <a href="/static/sources.html" class="nav-tab active">信源</a>
+          <a href="/static/console.html" class="nav-tab">操作台</a>
+        </nav>
+      </div>
+    </div>
+    <div class="sweep-track"><div class="sweep-bar"></div></div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-5 md:px-8 py-10">
+    <div class="mb-8 max-w-2xl">
+      <div class="eyebrow mb-2">采集矩阵</div>
+      <h1 class="text-2xl md:text-[26px] leading-snug text-[var(--bone)] mb-3">全部信源与实际采集力度</h1>
+      <p class="text-sm text-[var(--bone-dim)] leading-relaxed">
+        条目按调度真实计算：轮询越密集，强度条越满。防务信源额外标注可信度分级与健康状态。
+      </p>
+    </div>
+
+    <!-- summary strip -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-6 mb-8 pb-8 border-b hairline">
+      <div>
+        <div class="eyebrow mb-1.5">信源总数</div>
+        <div class="hero-count text-2xl text-[var(--bone)]" x-text="summary.total ?? '—'"></div>
+      </div>
+      <div>
+        <div class="eyebrow mb-1.5">健康</div>
+        <div class="hero-count text-2xl text-[var(--signal)]" x-text="summary.healthy ?? '—'"></div>
+      </div>
+      <div>
+        <div class="eyebrow mb-1.5">高强度采集</div>
+        <div class="hero-count text-2xl text-[var(--bone)]" x-text="summary.high_intensity ?? '—'"></div>
+      </div>
+      <div>
+        <div class="eyebrow mb-1.5">冷却中</div>
+        <div class="hero-count text-2xl" :class="summary.cooling > 0 ? 'text-[var(--amber)]' : 'text-[var(--bone)]'" x-text="summary.cooling ?? '—'"></div>
+      </div>
+    </div>
+
+    <!-- family filter -->
+    <div class="flex items-center gap-2 mb-5 flex-wrap">
+      <button @click="activeFamily = 'all'"
+              class="mono text-[11px] px-2.5 py-1 border transition"
+              :class="activeFamily === 'all' ? 'border-[var(--signal-dim)] text-[var(--signal)]' : 'border-[var(--line)] text-[var(--bone-mute)] hover:text-[var(--bone-dim)]'">
+        全部
+      </button>
+      <template x-for="fam in families" :key="fam">
+        <button @click="activeFamily = fam"
+                class="mono text-[11px] px-2.5 py-1 border transition"
+                :class="activeFamily === fam ? 'border-[var(--signal-dim)] text-[var(--signal)]' : 'border-[var(--line)] text-[var(--bone-mute)] hover:text-[var(--bone-dim)]'"
+                x-text="fam"></button>
+      </template>
+    </div>
+
+    <!-- table -->
+    <div class="panel">
+      <div class="hidden md:grid grid-cols-[1.6fr_0.8fr_0.9fr_1.4fr_0.9fr_0.7fr] gap-3 px-4 py-2.5 border-b hairline">
+        <span class="eyebrow">信源</span>
+        <span class="eyebrow">类型</span>
+        <span class="eyebrow">状态</span>
+        <span class="eyebrow">采集强度</span>
+        <span class="eyebrow">节奏</span>
+        <span class="eyebrow text-right">可信度</span>
+      </div>
+
+      <template x-for="row in filteredRows" :key="row.id">
+        <div class="source-row grid grid-cols-2 md:grid-cols-[1.6fr_0.8fr_0.9fr_1.4fr_0.9fr_0.7fr] gap-x-3 gap-y-2 px-4 py-3.5 items-center">
+          <div class="col-span-2 md:col-span-1 min-w-0">
+            <div class="text-sm text-[var(--bone)] truncate" x-text="row.name"></div>
+            <div class="mono text-[10px] text-[var(--bone-mute)] flex items-center gap-1.5 mt-0.5">
+              <span x-text="row.region"></span>
+              <span x-show="row.authority_tier">·</span>
+              <span x-show="row.authority_tier" class="tier-chip" x-text="'T' + row.authority_tier"></span>
+            </div>
+          </div>
+
+          <div class="mono text-[11px] text-[var(--bone-dim)]" x-text="row.family"></div>
+
+          <div class="flex items-center gap-2">
+            <span class="relative inline-flex items-center justify-center flex-shrink-0" style="width: 8px; height: 8px;">
+              <span class="radar-dot" :class="statusDotClass(row.status)"></span>
+              <span class="radar-ping" x-show="row.status === 'ok'"></span>
+            </span>
+            <span class="mono text-[11px]" :class="statusTextClass(row.status)" x-text="statusLabel(row.status)"></span>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <div class="intensity-track flex-1">
+              <div class="intensity-fill" :style="'width:' + row.intensity + '%'"></div>
+            </div>
+            <span class="mono text-[10.5px] text-[var(--bone-mute)] w-8 text-right" x-text="row.intensity"></span>
+          </div>
+
+          <div class="mono text-[11px] text-[var(--bone-dim)]" x-text="row.cadence"></div>
+
+          <div class="text-right">
+            <span class="mono text-[12px]" :class="row.credibility ? 'text-[var(--bone)]' : 'text-[var(--bone-mute)]'"
+                  x-text="row.credibility ? row.credibility.toFixed(2) : '—'"></span>
+          </div>
+        </div>
+      </template>
+
+      <div x-show="!loading && filteredRows.length === 0" class="px-4 py-12 text-center mono text-sm text-[var(--bone-mute)]">
+        该类别下暂无信源
+      </div>
+    </div>
+
+    <p class="mono text-[10.5px] text-[var(--bone-mute)] mt-6" x-text="'更新于 ' + (generatedAt ? new Date(generatedAt).toLocaleString('zh-CN') : '—')"></p>
+  </main>
+</div>
+
+<script>
+function sourcesView() {
+  return {
+    rows: [],
+    summary: {},
+    generatedAt: null,
+    activeFamily: 'all',
+    loading: true,
+
+    async init() {
+      await this.fetchSources();
+    },
+
+    async fetchSources() {
+      try {
+        const res = await fetch('/dashboard-api/sources');
+        const data = await res.json();
+        this.rows = data.sources || [];
+        this.summary = data.summary || {};
+        this.generatedAt = data.generated_at;
+      } catch (e) {
+        console.error('拉取信源列表失败:', e);
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    get families() {
+      return [...new Set(this.rows.map(r => r.family))].sort();
+    },
+
+    get filteredRows() {
+      if (this.activeFamily === 'all') return this.rows;
+      return this.rows.filter(r => r.family === this.activeFamily);
+    },
+
+    statusDotClass(status) {
+      const map = { ok: 'dot-ok', unverified: 'dot-warn', cooling_down: 'dot-warn', pending_disable: 'dot-down', paused: 'dot-paused' };
+      return map[status] || 'dot-paused';
+    },
+    statusTextClass(status) {
+      const map = { ok: 'text-[var(--signal)]', unverified: 'text-[var(--amber)]', cooling_down: 'text-[var(--amber)]', pending_disable: 'text-[var(--alert-high)]', paused: 'text-[var(--bone-mute)]' };
+      return map[status] || 'text-[var(--bone-mute)]';
+    },
+    statusLabel(status) {
+      const map = { ok: '正常', unverified: '待验证', cooling_down: '冷却中', pending_disable: '待禁用', paused: '已暂停' };
+      return map[status] || status;
+    },
+  };
+}
+</script>
+</body>
+</html>

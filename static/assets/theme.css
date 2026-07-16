@@ -1,0 +1,274 @@
+/* ===========================================================
+   Intel System — shared design tokens
+   Signal / noise vernacular. Void black, bone text, one live accent.
+   =========================================================== */
+
+:root {
+  --void:      #0b0d0f;
+  --panel:     #12161a;
+  --panel-2:   #161b1f;
+  --line:      #2a3034;
+  --line-soft: #1d2226;
+  --bone:      #e8e6df;
+  --bone-dim:  #9a9d9a;
+  --bone-mute: #63676a;
+  --signal:    #5eead4;
+  --signal-dim: #2f4a46;
+  --alert:     #c2542f;
+  --alert-dim: #4a2c1f;
+  --alert-high: #e0663a;
+  --amber:     #d9a441;
+
+  --mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  --sans: "IBM Plex Sans", -apple-system, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  background: var(--void);
+  color: var(--bone);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection { background: var(--signal-dim); color: var(--signal); }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--void); }
+::-webkit-scrollbar-thumb { background: var(--line); border-radius: 0; }
+::-webkit-scrollbar-thumb:hover { background: var(--bone-mute); }
+
+a { color: inherit; }
+
+.mono { font-family: var(--mono); }
+
+/* ---------- top shell ---------- */
+
+.shell-header {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: rgba(11, 13, 15, 0.92);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+
+.sweep-track {
+  position: relative;
+  height: 2px;
+  background: var(--line-soft);
+  overflow: hidden;
+}
+.sweep-bar {
+  position: absolute;
+  top: 0; left: 0;
+  height: 100%;
+  width: 18%;
+  background: linear-gradient(90deg, transparent, var(--signal), transparent);
+  animation: sweep 6s linear infinite;
+}
+@keyframes sweep {
+  0%   { left: -18%; }
+  100% { left: 100%; }
+}
+
+.brand-mark {
+  font-family: var(--mono);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  font-size: 15px;
+  color: var(--bone);
+}
+.brand-sub {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  color: var(--bone-mute);
+  text-transform: uppercase;
+}
+
+.status-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--signal);
+  box-shadow: 0 0 0 3px var(--signal-dim);
+}
+.status-dot.down { background: var(--alert); box-shadow: 0 0 0 3px var(--alert-dim); }
+
+.nav-tab {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  letter-spacing: 0.04em;
+  color: var(--bone-mute);
+  padding: 6px 2px;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s ease, border-color 0.15s ease;
+  white-space: nowrap;
+}
+.nav-tab:hover { color: var(--bone-dim); }
+.nav-tab.active { color: var(--bone); border-color: var(--signal); }
+
+/* ---------- generic panel ---------- */
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--bone-mute);
+}
+
+.hairline { border-color: var(--line) !important; }
+
+/* ---------- ticker feed (home) ---------- */
+
+.ticker-item {
+  border-bottom: 1px solid var(--line-soft);
+  transition: background 0.2s ease;
+}
+.ticker-item:hover { background: var(--panel-2); }
+
+.ticker-enter {
+  animation: ticker-in 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes ticker-in {
+  0%   { opacity: 0; transform: translateY(-14px); background: rgba(94, 234, 212, 0.08); }
+  60%  { background: rgba(94, 234, 212, 0.06); }
+  100% { opacity: 1; transform: translateY(0); background: transparent; }
+}
+
+.live-chip {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  color: var(--signal);
+  border: 1px solid var(--signal-dim);
+  padding: 1px 6px;
+  animation: chip-pulse 2.4s ease-in-out infinite;
+}
+@keyframes chip-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+.sev-bar { width: 3px; align-self: stretch; }
+.sev-high { background: var(--alert-high); }
+.sev-critical { background: var(--alert); }
+.sev-medium { background: var(--amber); }
+.sev-low { background: var(--line); }
+
+.type-cursor::after {
+  content: '▍';
+  color: var(--signal);
+  animation: blink 1s steps(1) infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+/* depth falloff for the cascading stack */
+.depth-1 { opacity: 0.94; }
+.depth-2 { opacity: 0.82; }
+.depth-3 { opacity: 0.68; }
+.depth-4 { opacity: 0.54; }
+.depth-far { opacity: 0.4; }
+
+/* ---------- filter pipeline page ---------- */
+
+.pipe-stage {
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+.pipe-node {
+  font-family: var(--mono);
+}
+.pipe-connector {
+  position: relative;
+  height: 100%;
+  width: 100%;
+}
+
+.particle {
+  position: absolute;
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--signal);
+  top: 50%;
+  transform: translateY(-50%);
+}
+.particle.killed { background: var(--alert); }
+
+@keyframes flow-across {
+  from { left: -2%; }
+  to   { left: 102%; }
+}
+
+.gauge-track {
+  height: 4px;
+  background: var(--line-soft);
+  overflow: hidden;
+}
+.gauge-fill {
+  height: 100%;
+  background: var(--signal);
+  transition: width 0.6s ease;
+}
+
+/* ---------- sources page ---------- */
+
+.source-row {
+  border-bottom: 1px solid var(--line-soft);
+}
+.intensity-track {
+  height: 3px;
+  background: var(--line-soft);
+  overflow: hidden;
+  position: relative;
+}
+.intensity-fill {
+  height: 100%;
+  background: var(--signal);
+}
+.tier-chip {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  color: var(--bone-dim);
+}
+
+.dot-ok { background: var(--signal); }
+.dot-warn { background: var(--amber); }
+.dot-down { background: var(--alert); }
+.dot-paused { background: var(--bone-mute); }
+
+@keyframes radar-ping {
+  0% { transform: scale(0.6); opacity: 0.7; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+.radar-ping {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid var(--signal);
+  animation: radar-ping 1.8s ease-out infinite;
+}
+
+/* ---------- utility ---------- */
+
+.fade-up-enter {
+  animation: fade-up 0.4s ease both;
+}
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+[x-cloak] { display: none !important; }
+
+.scrollbar-thin::-webkit-scrollbar { height: 6px; width: 6px; }
