@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>情报系统 · 过滤机制</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="/static/assets/theme.css">
+<style>
+  body { overflow-x: hidden; }
+  .lane { position: relative; height: 64px; }
+  .stage-col {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(150px, 1fr));
+    gap: 0;
+  }
+  @media (max-width: 900px) {
+    .stage-col { grid-template-columns: 1fr; }
+    .connector-h { display: none; }
+  }
+  .stage-head { min-height: 118px; }
+  .connector-h {
+    position: relative;
+    height: 2px;
+    background: var(--line);
+    align-self: center;
+    margin: 0 -1px;
+  }
+  .formula-box {
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.9;
+    color: var(--bone-dim);
+  }
+  .formula-box .op { color: var(--bone-mute); }
+  .formula-box .plus { color: var(--signal); }
+  .formula-box .minus { color: var(--alert-high); }
+</style>
+</head>
+<body>
+<div x-data="filterViz()" x-init="init()" x-cloak>
+
+  <!-- ============ SHELL HEADER ============ -->
+  <header class="shell-header">
+    <div class="max-w-6xl mx-auto px-5 md:px-8 py-3.5 flex items-center justify-between gap-3 flex-wrap">
+      <div class="flex items-center gap-3">
+        <span class="brand-mark">情报系统</span>
+        <span class="brand-sub hidden sm:inline">SIGNAL&nbsp;INTELLIGENCE&nbsp;RUNTIME</span>
+      </div>
+      <div class="flex items-center gap-5">
+        <div class="flex items-center gap-2">
+          <span class="status-dot"></span>
+          <span class="mono text-xs text-[var(--bone-dim)]">ONLINE</span>
+        </div>
+        <nav class="flex items-center gap-3 sm:gap-5 overflow-x-auto scrollbar-thin">
+          <a href="/static/index.html" class="nav-tab">信号流</a>
+          <a href="/static/filter.html" class="nav-tab active">过滤机制</a>
+          <a href="/static/sources.html" class="nav-tab">信源</a>
+          <a href="/static/console.html" class="nav-tab">操作台</a>
+        </nav>
+      </div>
+    </div>
+    <div class="sweep-track"><div class="sweep-bar"></div></div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-5 md:px-8 py-10">
+    <div class="mb-10 max-w-2xl">
+      <div class="eyebrow mb-2">DEFENSE 信源过滤管线</div>
+      <h1 class="text-2xl md:text-[26px] leading-snug text-[var(--bone)] mb-3">
+        原始信号如何被筛出噪音，成为一条告警
+      </h1>
+      <p class="text-sm text-[var(--bone-dim)] leading-relaxed">
+        每一轮采集，防务信源管线都会把 RSS 原文压缩成极少数值得推送的事件。
+        下面按真实代码路径重放这个过程 —— 去重、硬性过滤、打分、取前 K、告警阈值。
+      </p>
+    </div>
+
+    <!-- controls -->
+    <div class="flex items-center gap-3 mb-8">
+      <button @click="runBatch()" :disabled="running"
+              class="mono text-xs px-3.5 py-2 border border-[var(--signal-dim)] text-[var(--signal)] hover:bg-[var(--signal-dim)] transition disabled:opacity-40">
+        <span x-show="!running">▶ 重放一批 (12 条)</span>
+        <span x-show="running">处理中…</span>
+      </button>
+      <span class="mono text-[11px] text-[var(--bone-mute)]" x-text="running ? '' : '点击以真实规则逐条重放样本标题'"></span>
+    </div>
+
+    <!-- ============ PIPELINE ============ -->
+    <div class="stage-col mb-2">
+      <template x-for="(stage, si) in stages" :key="stage.key">
+        <div class="flex items-stretch">
+          <div class="pipe-stage stage-head flex-1 px-4 py-4 flex flex-col">
+            <div class="eyebrow mb-1" x-text="'STAGE ' + (si+1)"></div>
+            <div class="mono text-[13px] text-[var(--bone)] mb-1.5" x-text="stage.title"></div>
+            <div class="text-[11.5px] text-[var(--bone-mute)] leading-snug flex-1" x-text="stage.desc"></div>
+            <div class="mt-3 flex items-baseline gap-1.5">
+              <span class="hero-count mono text-lg text-[var(--bone)]" x-text="stage.count"></span>
+              <span class="mono text-[10px] text-[var(--bone-mute)]">条存活</span>
+            </div>
+            <div class="gauge-track mt-2">
+              <div class="gauge-fill" :style="'width:' + (stage.count / seedTotal * 100) + '%'"></div>
+            </div>
+          </div>
+          <div class="connector-h flex-shrink-0" style="width: 22px" x-show="si < stages.length - 1"></div>
+        </div>
+      </template>
+    </div>
+
+    <!-- ============ LIVE LANE (particles) ============ -->
+    <div class="panel mt-6 px-4 md:px-6 py-6">
+      <div class="eyebrow mb-4">逐条重放</div>
+      <div class="lane" x-ref="lane">
+        <template x-for="p in particles" :key="p.id">
+          <div class="particle" :class="p.killed && 'killed'"
+               :style="'top:' + p.lane + '%; animation: flow-across ' + p.duration + 's linear forwards; animation-delay:' + p.delay + 's'"
+               @animationend="onParticleDone(p)"></div>
+        </template>
+        <div class="absolute inset-0 flex items-center">
+          <div class="w-full border-t border-dashed border-[var(--line)]"></div>
+        </div>
+      </div>
+      <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-1.5">
+        <template x-for="log in logs.slice(0, 8)" :key="log.id">
+          <div class="mono text-[11px] flex items-center gap-2 py-0.5">
+            <span class="w-1.5 h-1.5 rounded-full flex-shrink-0" :class="log.killed ? 'bg-[var(--alert-high)]' : 'bg-[var(--signal)]'"></span>
+            <span class="text-[var(--bone-mute)] truncate" x-text="log.title"></span>
+            <span class="flex-shrink-0" :class="log.killed ? 'text-[var(--alert-high)]' : 'text-[var(--signal)]'" x-text="log.reason"></span>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- ============ SCORING FORMULA ============ -->
+    <div class="grid md:grid-cols-2 gap-5 mt-8">
+      <div class="panel px-5 py-5">
+        <div class="eyebrow mb-3">STAGE 2 · 打分公式</div>
+        <div class="formula-box">
+          <div>score =</div>
+          <div class="pl-3"><span class="plus">+</span> 0.3 <span class="op">若命中白名单关键词</span></div>
+          <div class="pl-3"><span class="minus">−</span> 0.4 <span class="op">若命中垃圾模式（无白名单豁免）</span></div>
+          <div class="pl-3"><span class="plus">+</span> credibility × 0.2</div>
+          <div class="pl-3"><span class="plus">+</span> extraction_quality × 0.1</div>
+          <div class="pl-3"><span class="plus">+</span> tier_bonus <span class="op">(T1 +0.2 / T2 +0.1 / T3 0 / T4 −0.1)</span></div>
+        </div>
+      </div>
+      <div class="panel px-5 py-5">
+        <div class="eyebrow mb-3">阈值与产出</div>
+        <div class="space-y-3 mt-1">
+          <div class="flex items-center justify-between text-sm">
+            <span class="text-[var(--bone-dim)]">取分数前 K</span>
+            <span class="mono text-[var(--bone)]" x-text="'K = ' + config.topk"></span>
+          </div>
+          <div class="flex items-center justify-between text-sm">
+            <span class="text-[var(--bone-dim)]">进入记忆池</span>
+            <span class="mono text-[var(--bone)]">全部 top-K 事件</span>
+          </div>
+          <div class="flex items-center justify-between text-sm">
+            <span class="text-[var(--bone-dim)]">触发告警阈值</span>
+            <span class="mono text-[var(--signal)]" x-text="'score ≥ ' + config.alert_threshold"></span>
+          </div>
+          <div class="flex items-center justify-between text-sm">
+            <span class="text-[var(--bone-dim)]">采集周期</span>
+            <span class="mono text-[var(--bone)]" x-text="config.interval_s + 's'"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <p class="mono text-[10.5px] text-[var(--bone-mute)] mt-8">
+      app/defense/scorer.py · app/defense/deduper.py · app/rules/defense_rules.py
+    </p>
+  </main>
+</div>
+
+<script>
+function filterViz() {
+  const SAMPLE_TITLES = [
+    { title: 'Navy commissions new Virginia-class submarine', kind: 'pass' },
+    { title: 'Sponsored: Top 10 defense contractors to watch', kind: 'blacklist' },
+    { title: 'Hypersonic missile test reported over Pacific', kind: 'pass' },
+    { title: 'Change of command ceremony held at Fort Bragg', kind: 'junk' },
+    { title: 'DefenseScoop podcast: AI in the Pentagon', kind: 'blacklist' },
+    { title: 'Stealth fighter program faces delays, GAO reports', kind: 'pass' },
+    { title: 'Drone swarm demonstrated in joint exercise', kind: 'pass' },
+    { title: 'Ribbon cutting ceremony for new naval base', kind: 'junk' },
+    { title: 'Cyber unit detects intrusion attempt on satellite link', kind: 'pass' },
+    { title: 'Careers: apply now for defense engineering roles', kind: 'blacklist' },
+    { title: 'Frigate deal signed amid rising tensions', kind: 'pass' },
+    { title: 'Duplicate: submarine commissioning (mirrored feed)', kind: 'dedup' },
+  ];
+
+  return {
+    seedTotal: 200,
+    config: { topk: 200, alert_threshold: 0.3, interval_s: 1800 },
+    stages: [
+      { key: 'raw', title: '原始采集', desc: 'RSS collector 拉取全部条目', count: 200 },
+      { key: 'dedup', title: '去重', desc: 'url_hash + content_hash 双层去重', count: 158 },
+      { key: 'stage1', title: '硬性过滤', desc: '质量下限 · 黑名单 · 垃圾模式', count: 96 },
+      { key: 'stage2', title: '打分', desc: '按公式计算 pre_score', count: 96 },
+      { key: 'topk', title: 'Top-K 截取', desc: '按分数降序取前 K', count: 60 },
+      { key: 'alert', title: '告警阈值', desc: 'score ≥ ' + 0.3 + ' 才推送飞书', count: 14 },
+    ],
+    particles: [],
+    logs: [],
+    running: false,
+    _pid: 0,
+
+    init() {
+      this.fetchConfig();
+    },
+
+    async fetchConfig() {
+      try {
+        const res = await fetch('/dashboard-api/sources');
+        const data = await res.json();
+        const defenseRow = (data.sources || []).find(s => s.source === 'defense');
+        if (defenseRow) {
+          this.config.interval_s = defenseRow.cadence?.match(/\d+/)?.[0] ? this.config.interval_s : this.config.interval_s;
+        }
+      } catch (e) {
+        // config endpoint optional for this view; static defaults stand in
+      }
+    },
+
+    runBatch() {
+      if (this.running) return;
+      this.running = true;
+      this.particles = [];
+      this.logs = [];
+
+      SAMPLE_TITLES.forEach((sample, i) => {
+        const killed = sample.kind !== 'pass';
+        const reason = {
+          pass: '→ 通过',
+          blacklist: '黑名单剔除',
+          junk: '垃圾模式剔除',
+          dedup: '重复剔除',
+        }[sample.kind];
+
+        this._pid++;
+        const p = {
+          id: this._pid,
+          lane: 15 + (i % 6) * 14,
+          duration: 2.4 + Math.random() * 0.8,
+          delay: i * 0.18,
+          killed,
+          title: sample.title,
+          reason,
+        };
+        this.particles.push(p);
+      });
+
+      setTimeout(() => { this.running = false; }, SAMPLE_TITLES.length * 180 + 3200);
+    },
+
+    onParticleDone(p) {
+      this.logs.unshift({ id: p.id, title: p.title, killed: p.killed, reason: p.reason });
+      this.particles = this.particles.filter(x => x.id !== p.id);
+    },
+  };
+}
+</script>
+</body>
+</html>
